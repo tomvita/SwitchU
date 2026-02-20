@@ -1,0 +1,13 @@
+# Build outputs
+build_switch/
+*.elf
+*.nro
+*.nacp
+
+# IDE / tooling
+.vscode/
+.xmake/
+
+# OS junk
+.DS_Store
+Thumbs.db
