@@ -173,7 +173,7 @@ void WiiUMenuApp::buildGrid() {
 
     m_grid = std::make_shared<IconGrid>();
     m_grid->setRect({0, 90, 1280, 540});
-    m_grid->setup(std::move(icons), 5, 3, 130, 130, 28, 24);
+    m_grid->setup(std::move(icons), 5, 3, 150, 150, 20, 16);
 
     m_cursor = std::make_shared<SelectionCursor>();
 
