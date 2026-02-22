@@ -22,6 +22,9 @@ public:
     void setTitleId(uint64_t id)  { m_titleId = id; }
     uint64_t titleId() const      { return m_titleId; }
 
+    void setSuspended(bool s)     { m_suspended = s; }
+    bool isSuspended() const      { return m_suspended; }
+
     // Appear animation
     void startAppear(float delay);
 
@@ -41,6 +44,8 @@ private:
     Texture*    m_tex = nullptr;
     uint64_t    m_titleId = 0;
     bool        m_focused = false;
+    bool        m_suspended = false;
+    float       m_suspendPulse = 0.f;  // pulsing timer for suspended glow
 
     // Appear animation state
     AnimatedFloat m_animScale;

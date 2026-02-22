@@ -23,6 +23,9 @@ APP_TITLE	:=	SwitchU
 APP_AUTHOR	:=	PoloNX
 APP_VERSION	:=	1.0.0
 
+CONFIG_JSON	:=	SwitchU.json
+QLAUNCH_TID	:=	0100000000001000
+
 #---------------------------------------------------------------------------------
 # Compiler flags
 #---------------------------------------------------------------------------------
@@ -98,30 +101,13 @@ export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 
 export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
-ifeq ($(strip $(ICON)),)
-	icons := $(wildcard *.jpg)
-	ifneq (,$(findstring $(TARGET).jpg,$(icons)))
-		export APP_ICON := $(TOPDIR)/$(TARGET).jpg
-	else
-		ifneq (,$(findstring icon.jpg,$(icons)))
-			export APP_ICON := $(TOPDIR)/icon.jpg
-		endif
-	endif
-else
-	export APP_ICON := $(TOPDIR)/$(ICON)
-endif
+export APP_JSON	:=	$(TOPDIR)/$(CONFIG_JSON)
 
-ifeq ($(strip $(NO_ICON)),)
-	export NROFLAGS += --icon=$(APP_ICON)
-endif
-ifeq ($(strip $(NO_NACP)),)
-	export NROFLAGS += --nacp=$(CURDIR)/$(TARGET).nacp
-endif
-ifneq ($(ROMFS),)
-	export NROFLAGS += --romfsdir=$(CURDIR)/$(ROMFS)
-endif
+# SD card output directory
+SD_OUT		:=	$(CURDIR)/sd_out
+SD_CONTENTS	:=	$(SD_OUT)/atmosphere/contents/$(QLAUNCH_TID)
 
-.PHONY: all clean shaders libnxtc
+.PHONY: all clean shaders libnxtc install
 
 all: libnxtc shaders $(BUILD)
 
@@ -134,9 +120,20 @@ $(BUILD): libnxtc shaders
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
+install: all
+	@echo "Packaging for Atmosphère (qlaunch replacement)..."
+	@mkdir -p $(SD_CONTENTS)
+	@cp $(TARGET).nsp $(SD_CONTENTS)/exefs.nsp
+	@rm -rf $(SD_CONTENTS)/romfs
+	@cp -r $(ROMFS) $(SD_CONTENTS)/romfs
+	@echo "Done! Copy sd_out/ contents to your SD card."
+	@echo "  $(SD_CONTENTS)/exefs.nsp"
+	@echo "  $(SD_CONTENTS)/romfs/"
+
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).nro $(TARGET).nacp $(TARGET).elf
+	@rm -fr $(BUILD) $(TARGET).nsp $(TARGET).nso $(TARGET).npdm $(TARGET).elf
+	@rm -rf exefs $(SD_OUT)
 	@rm -f $(ROMFS_SHDR_DIR)/*.dksh
 	@$(MAKE) --no-print-directory -C lib/libnxtc clean
 
@@ -145,13 +142,7 @@ else
 
 DEPENDS	:=	$(OFILES:.o=.d)
 
-all: $(OUTPUT).nro
-
-ifeq ($(strip $(NO_NACP)),)
-$(OUTPUT).nro: $(OUTPUT).elf $(OUTPUT).nacp
-else
-$(OUTPUT).nro: $(OUTPUT).elf
-endif
+all: $(OUTPUT).nsp
 
 $(OUTPUT).elf: $(OFILES)
 $(OFILES_SRC): $(HFILES_BIN)

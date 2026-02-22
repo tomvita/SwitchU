@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+export PATH="${DEVKITPRO}/devkitA64/bin:${PATH}"
+
 # This script is used to request the latest crash report from the NintendoSwitch homebrew FTP server
 # Tested with: https://github.com/cathery/sys-ftpd
 # Author: https://github.com/xfangfang

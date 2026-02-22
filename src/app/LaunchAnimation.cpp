@@ -1,13 +1,13 @@
 #include "LaunchAnimation.hpp"
 #include "../core/Renderer.hpp"
-#include <switch.h>
 #include <cmath>
 
 namespace ui {
 
 void LaunchAnimation::start(const Rect& from, const Texture* tex, float cornerRadius,
                             const Color& panelColor, const Color& borderColor,
-                            uint64_t titleId, AccountUid uid, VoidCallback onDone)
+                            uint64_t titleId, AccountUid uid,
+                            LaunchCallback onLaunch, VoidCallback onDone)
 {
     m_from         = from;
     m_tex          = tex;
@@ -16,6 +16,7 @@ void LaunchAnimation::start(const Rect& from, const Texture* tex, float cornerRa
     m_borderColor  = borderColor;
     m_titleId      = titleId;
     m_uid          = uid;
+    m_onLaunch     = std::move(onLaunch);
     m_onDone       = std::move(onDone);
     m_timer        = 0.f;
     m_playing      = true;
@@ -29,19 +30,15 @@ void LaunchAnimation::onUpdate(float dt) {
     if (!m_playing) return;
     m_timer += dt;
 
-    // At the end of hold phase, launch the app
-    if (!m_launched && m_timer >= kZoomDur + kHoldDur) {
-        m_launched = true;
-        if (m_titleId != 0) {
-            // Use debug launch with preselected user so the system
-            // doesn't show its own user selector again.
-            appletRequestLaunchApplicationWithUserAndArgumentForDebug(
-                m_titleId, &m_uid, 1, false, nullptr, 0);
-        }
-    }
-
     if (m_timer >= kTotalDur) {
         m_playing = false;
+        // Launch the game once the full animation has finished
+        if (!m_launched) {
+            m_launched = true;
+            if (m_titleId != 0 && m_onLaunch) {
+                m_onLaunch(m_titleId, m_uid);
+            }
+        }
         if (m_onDone) m_onDone();
     }
 }

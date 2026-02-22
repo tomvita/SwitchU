@@ -3,6 +3,8 @@ build_switch/
 *.elf
 *.nro
 *.nacp
+*.nsp
+sd_out/
 
 # IDE / tooling
 .vscode/

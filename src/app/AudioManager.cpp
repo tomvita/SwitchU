@@ -11,7 +11,7 @@ bool AudioManager::initialize() {
         std::fprintf(stderr, "[Audio] SDL_Init(AUDIO) failed: %s\n", SDL_GetError());
         return false;
     }
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) < 0) {
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096) < 0) {
         std::fprintf(stderr, "[Audio] Mix_OpenAudio failed: %s\n", Mix_GetError());
         return false;
     }

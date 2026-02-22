@@ -4,8 +4,11 @@
 #include "../core/Animation.hpp"
 #include "../core/Texture.hpp"
 #include <switch/services/acc.h>
+#include <functional>
 
 namespace ui {
+
+using LaunchCallback = std::function<void(uint64_t titleId, AccountUid uid)>;
 
 class LaunchAnimation : public Widget {
 public:
@@ -14,7 +17,8 @@ public:
     // Start: zoom the icon from its current position to screen center, then launch
     void start(const Rect& from, const Texture* tex, float cornerRadius,
                const Color& panelColor, const Color& borderColor,
-               uint64_t titleId, AccountUid uid, VoidCallback onDone = {});
+               uint64_t titleId, AccountUid uid,
+               LaunchCallback onLaunch = {}, VoidCallback onDone = {});
 
     bool isPlaying() const { return m_playing; }
 
@@ -40,6 +44,7 @@ private:
     Color   m_borderColor;
     uint64_t m_titleId = 0;
     AccountUid m_uid = {};
+    LaunchCallback m_onLaunch;
     VoidCallback m_onDone;
     bool    m_launched = false;
 };
