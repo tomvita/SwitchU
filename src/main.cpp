@@ -1,58 +1,67 @@
-#include "app/WiiUMenuApp.hpp"
+#include "core/WiiUMenuApp.hpp"
 #include "core/DebugLog.hpp"
+#include <nxui/Application.hpp>
 #include <switch.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <memory>
 
-// ---------------------------------------------------------------------------
-// Tell libnx we are the HOME Menu (SystemApplet).
-// libnx's default __appInit (which runs before main) reads this symbol
-// and calls appletInitialize() with the right type.  We must NOT call
-// appletInitialize / smInitialize / fsInitialize / hidInitialize again
-// in main(), or the internal event handles get corrupted and we never
-// receive system messages (Home button, overlays, …).
-// ---------------------------------------------------------------------------
 extern "C" {
+#ifdef SWITCHU_HOMEBREW
+    u32 __nx_applet_type = AppletType_Application;
+#else
     u32 __nx_applet_type = AppletType_SystemApplet;
+#endif
 
-    // Request ~208 MB of heap — matches DeltaLaunch.
-    // Must be a multiple of 0x200000.
+    // Request ~208 MB of heap (multiple of 0x200000).
     size_t __nx_heap_size = 0xD000000;
 }
 
-// ---------------------------------------------------------------------------
-// userAppInit / userAppExit — libnx hooks called by the default __appInit
-// AFTER sm, applet, hid, time, fs, fsdev are already initialized.
-// This is where DeltaLaunch initializes its extra services.
-// ---------------------------------------------------------------------------
 extern "C" void userAppInit(void) {
+    timeInitialize();
     plInitialize(PlServiceType_System);
     setInitialize();
     setsysInitialize();
+#ifndef SWITCHU_HOMEBREW
     nsInitialize();
     accountInitialize(AccountServiceType_System);
     nssuInitialize();
     avmInitialize();
+#else
+    accountInitialize(AccountServiceType_Application);
+#endif
     psmInitialize();
+    lblInitialize();
     romfsInit();
 }
 
 extern "C" void userAppExit(void) {
+    lblExit();
     psmExit();
+#ifndef SWITCHU_HOMEBREW
     avmExit();
     nssuExit();
+#endif
     accountExit();
+#ifndef SWITCHU_HOMEBREW
     nsExit();
+#endif
     setsysExit();
     setExit();
     plExit();
+    timeExit();
     romfsExit();
 }
 
 int main(int argc, char* argv[]) {
+    std::srand(static_cast<unsigned>(std::time(nullptr)));
     DebugLog::log("[main] applet config...");
+#ifndef SWITCHU_HOMEBREW
     appletLoadAndApplyIdlePolicySettings();
+#endif
 
     DebugLog::log("[main] SDL_Init...");
     if (SDL_Init(SDL_INIT_AUDIO) < 0)
@@ -64,7 +73,8 @@ int main(int argc, char* argv[]) {
 
     DebugLog::log("[main] creating app...");
     {
-        ui::WiiUMenuApp app;
+        nxui::Application app;
+        app.setActivity(std::make_unique<WiiUMenuApp>());
         if (app.initialize())
             app.run();
         DebugLog::log("[main] app.shutdown...");

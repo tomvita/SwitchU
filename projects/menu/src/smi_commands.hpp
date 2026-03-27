@@ -1,0 +1,157 @@
+#pragma once
+#include <switchu/smi_protocol.hpp>
+#include <switchu/smi_helpers.hpp>
+#include <switch.h>
+
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+namespace switchu::menu::smi_cmd {
+
+
+static Result pushOutStorage(const void* data, size_t size) {
+    AppletStorage stor{};
+    Result rc = appletCreateStorage(&stor, static_cast<s64>(size));
+    if (R_FAILED(rc)) return rc;
+
+    rc = appletStorageWrite(&stor, 0, data, size);
+    if (R_FAILED(rc)) { appletStorageClose(&stor); return rc; }
+
+    rc = appletPushInteractiveOutData(&stor);
+    return rc;
+}
+
+static Result popInStorage(void* out, size_t maxSize, size_t* outActual) {
+    AppletStorage stor{};
+    Result rc = appletPopInteractiveInData(&stor);
+    if (R_FAILED(rc)) return rc;
+
+    s64 sz = 0;
+    appletStorageGetSize(&stor, &sz);
+    size_t toRead = (size_t)sz < maxSize ? (size_t)sz : maxSize;
+    rc = appletStorageRead(&stor, 0, out, toRead);
+    appletStorageClose(&stor);
+    if (outActual) *outActual = toRead;
+    return rc;
+}
+
+inline Result sendSimple(smi::SystemMessage msg) {
+    smi::CommandHeader hdr{smi::kCommandMagic, static_cast<uint32_t>(msg)};
+    return pushOutStorage(&hdr, sizeof(hdr));
+}
+
+inline Result launchApplication(uint64_t titleId, AccountUid uid) {
+    uint8_t buf[sizeof(smi::CommandHeader) + sizeof(smi::LaunchAppArgs)]{};
+    auto* hdr = reinterpret_cast<smi::CommandHeader*>(buf);
+    auto* args = reinterpret_cast<smi::LaunchAppArgs*>(buf + sizeof(smi::CommandHeader));
+
+    hdr->magic    = smi::kCommandMagic;
+    hdr->message  = static_cast<uint32_t>(smi::SystemMessage::LaunchApplication);
+    args->title_id = titleId;
+    std::memcpy(args->user_uid, &uid, sizeof(uid));
+
+    return pushOutStorage(buf, sizeof(buf));
+}
+
+inline Result resumeApplication() {
+    return sendSimple(smi::SystemMessage::ResumeApplication);
+}
+
+inline Result terminateApplication() {
+    return sendSimple(smi::SystemMessage::TerminateApplication);
+}
+
+inline Result enterSleep()  { return sendSimple(smi::SystemMessage::EnterSleep); }
+inline Result shutdown()    { return sendSimple(smi::SystemMessage::Shutdown); }
+inline Result reboot()      { return sendSimple(smi::SystemMessage::Reboot); }
+inline Result menuReady()      { return sendSimple(smi::SystemMessage::MenuReady); }
+inline Result menuClosing()    { return sendSimple(smi::SystemMessage::MenuClosing); }
+inline Result menuSuspending() { return sendSimple(smi::SystemMessage::MenuSuspending); }
+
+inline void drainAllResponses() {
+    AppletStorage stor{};
+    svcSleepThread(30'000'000ULL);
+    while (R_SUCCEEDED(appletPopInteractiveInData(&stor)))
+        appletStorageClose(&stor);
+}
+
+inline Result requestAppListRefresh() {
+    Result rc = sendSimple(smi::SystemMessage::GetAppList);
+    if (R_FAILED(rc)) return rc;
+    drainAllResponses();
+    return 0;
+}
+
+struct AppEntry {
+    uint64_t titleId;
+    uint32_t nameLen;
+    uint32_t iconLen;
+    uint32_t viewFlags = 0;
+    std::string name;
+    std::vector<uint8_t> icon;
+};
+
+inline Result getAppList(std::vector<AppEntry>& outList) {
+    FILE* f = nullptr;
+    for (int retry = 0; retry < 20 && !f; ++retry) {
+        f = std::fopen("sdmc:/config/SwitchU/applist.bin", "rb");
+        if (!f) svcSleepThread(50'000'000ULL);
+    }
+    if (!f) return MAKERESULT(Module_Libnx, 0xFE);
+
+    uint32_t count = 0;
+    if (std::fread(&count, sizeof(count), 1, f) != 1) {
+        std::fclose(f);
+        return MAKERESULT(Module_Libnx, 0xFD);
+    }
+
+    for (uint32_t i = 0; i < count; ++i) {
+        smi::AppEntryHeader eh{};
+        if (std::fread(&eh, sizeof(eh), 1, f) != 1) break;
+
+        AppEntry ent{};
+        ent.titleId = eh.title_id;
+        ent.nameLen = eh.name_len;
+        ent.iconLen = eh.icon_data_len;
+        ent.viewFlags = eh.view_flags;
+
+        if (eh.name_len > 0) {
+            ent.name.resize(eh.name_len);
+            if (std::fread(&ent.name[0], 1, eh.name_len, f) != eh.name_len) break;
+        }
+
+        if (eh.icon_data_len > 0) {
+            ent.icon.resize(eh.icon_data_len);
+            if (std::fread(ent.icon.data(), 1, eh.icon_data_len, f) != eh.icon_data_len) break;
+        }
+
+        outList.push_back(std::move(ent));
+    }
+
+    std::fclose(f);
+    return 0;
+}
+
+
+inline Result getSystemStatus(smi::SystemStatus& out) {
+    Result rc = sendSimple(smi::SystemMessage::GetSystemStatus);
+    if (R_FAILED(rc)) return rc;
+
+    uint8_t buf[smi::kStorageSize]{};
+    size_t actual = 0;
+    for (int retry = 0; retry < 200; retry++) {
+        rc = popInStorage(buf, sizeof(buf), &actual);
+        if (R_SUCCEEDED(rc)) break;
+        svcSleepThread(10'000'000ULL);
+    }
+    if (R_FAILED(rc)) return rc;
+
+    if (actual >= sizeof(smi::CommandHeader) + sizeof(smi::SystemStatus)) {
+        std::memcpy(&out, buf + sizeof(smi::CommandHeader), sizeof(smi::SystemStatus));
+    }
+    return 0;
+}
+
+}

@@ -5,11 +5,10 @@ build_switch/
 *.nacp
 *.nsp
 sd_out/
-
-# IDE / tooling
+build/
+build_nro/
 .vscode/
 .xmake/
-
 # OS junk
 .DS_Store
 Thumbs.db

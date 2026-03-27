@@ -1,0 +1,184 @@
+#include "TabBuilders.hpp"
+#include <nxui/core/I18n.hpp>
+#include <switch.h>
+#include <algorithm>
+#include <cstdio>
+
+SettingsScreen::Tab settings::tabs::SystemTab::build(SettingsScreen& screen) {
+    using Tab = SettingsScreen::Tab;
+    using SettingItem = SettingsScreen::SettingItem;
+    using ItemType = SettingsScreen::ItemType;
+    auto& i18n = nxui::I18n::instance();
+    Tab t;
+    t.name = i18n.tr("settings.tabs.system", "System");
+
+    {
+        SetSysFirmwareVersion fw{};
+        SettingItem it; it.label = i18n.tr("settings.system.firmware", "Firmware Version"); it.type = ItemType::Info;
+        if (R_SUCCEEDED(setsysGetFirmwareVersion(&fw)))
+            it.infoText = fw.display_version;
+        else
+            it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.custom_firmware", "Custom Firmware"); it.type = ItemType::Info;
+        u64 cfg = 0;
+        bool isAtmos = R_SUCCEEDED(splGetConfig((SplConfigItem)65000, &cfg));
+        if (isAtmos) {
+            unsigned major = (cfg >> 56) & 0xFF;
+            unsigned minor = (cfg >> 48) & 0xFF;
+            unsigned micro = (cfg >> 40) & 0xFF;
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "Atmosphere %u.%u.%u", major, minor, micro);
+            it.infoText = buf;
+        } else {
+            it.infoText = i18n.tr("settings.system.not_detected", "Not detected");
+        }
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.emunand", "EmuNAND"); it.type = ItemType::Info;
+        u64 cfg = 0;
+        if (R_SUCCEEDED(splGetConfig((SplConfigItem)65007, &cfg)) && cfg != 0)
+            it.infoText = i18n.tr("common.active", "Active");
+        else
+            it.infoText = i18n.tr("settings.system.inactive_sysnand", "Inactive / SysNAND");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SetSysDeviceNickName nick{};
+        SettingItem it; it.label = i18n.tr("settings.system.console_nickname", "Console Nickname"); it.type = ItemType::Info;
+        if (R_SUCCEEDED(setsysGetDeviceNickname(&nick)))
+            it.infoText = nick.nickname;
+        else
+            it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SetSysSerialNumber sn{};
+        SettingItem it; it.label = i18n.tr("settings.system.serial_number", "Serial Number"); it.type = ItemType::Info;
+        if (R_SUCCEEDED(setsysGetSerialNumber(&sn)))
+            it.infoText = sn.number;
+        else
+            it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        TimeLocationName tz{};
+        SettingItem it; it.label = i18n.tr("settings.system.timezone", "Timezone"); it.type = ItemType::Info;
+        if (R_SUCCEEDED(timeGetDeviceLocationName(&tz)))
+            it.infoText = tz.name;
+        else
+            it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.usb30", "USB 3.0"); it.type = ItemType::Toggle;
+        it.description = i18n.tr("settings.system.usb30_desc", "Enable USB 3.0 for faster transfer speeds.");
+        bool val = false;
+        setsysGetUsb30EnableFlag(&val);
+        it.boolVal = val;
+        it.anim01 = val ? 1.f : 0.f;
+        it.onChange = [](SettingItem& self) {
+            setsysSetUsb30EnableFlag(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SetBatteryLot lot{};
+        SettingItem it; it.label = i18n.tr("settings.system.battery_lot", "Battery Lot"); it.type = ItemType::Info;
+        if (R_SUCCEEDED(setsysGetBatteryLot(&lot)))
+            it.infoText = lot.lot;
+        else
+            it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.ui_language", "UI Language"); it.type = ItemType::Selector;
+
+        std::vector<std::string> tags = nxui::I18n::supportedLanguageTags();
+        it.options.reserve(tags.size());
+        for (const auto& tag : tags) {
+            if (tag == "auto") it.options.push_back(i18n.tr("common.auto", "Auto"));
+            else it.options.push_back(i18n.tr(std::string("languages.") + tag, tag));
+        }
+
+        auto itTag = std::find(tags.begin(), tags.end(), screen.m_uiLanguageOverride);
+        it.intVal = (itTag != tags.end()) ? (int)std::distance(tags.begin(), itTag) : 0;
+
+        it.onChange = [&screen, tags = std::move(tags)](SettingItem& self) {
+            int idx = std::clamp(self.intVal, 0, std::max(0, (int)tags.size() - 1));
+            const std::string& selected = tags[idx];
+            screen.m_uiLanguageOverride = selected;
+            if (screen.m_uiLanguageCb) screen.m_uiLanguageCb(selected);
+        };
+
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.console_language", "Console Language"); it.type = ItemType::Info;
+        u64 langCode = 0;
+        if (R_SUCCEEDED(setGetSystemLanguage(&langCode))) {
+            SetLanguage lang = SetLanguage_ENUS;
+            if (R_SUCCEEDED(setMakeLanguage(langCode, &lang))) {
+                std::string tag = nxui::I18n::detectSystemLanguageTag();
+                it.infoText = i18n.tr(std::string("languages.") + tag, tag);
+            }
+        }
+        if (it.infoText.empty()) it.infoText = i18n.tr("common.na", "N/A");
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.region", "Region"); it.type = ItemType::Selector;
+        it.options = {
+            i18n.tr("settings.system.region_japan", "Japan"),
+            i18n.tr("settings.system.region_usa", "USA"),
+            i18n.tr("settings.system.region_europe", "Europe"),
+            i18n.tr("settings.system.region_australia", "Australia"),
+            i18n.tr("settings.system.region_hong_kong", "Hong Kong"),
+            i18n.tr("settings.system.region_taiwan", "Taiwan"),
+            i18n.tr("settings.system.region_south_korea", "South Korea")
+        };
+        SetRegion reg = SetRegion_JPN;
+        if (R_SUCCEEDED(setGetRegionCode(&reg)))
+            it.intVal = (int)reg;
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.auto_update", "Auto Update"); it.type = ItemType::Toggle;
+        bool val = true;
+        setsysGetAutoUpdateEnableFlag(&val);
+        it.boolVal = val;
+        it.anim01 = val ? 1.f : 0.f;
+        it.onChange = [](SettingItem& self) {
+            setsysSetAutoUpdateEnableFlag(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    {
+        SettingItem it; it.label = i18n.tr("settings.system.error_reporting", "Error Reporting"); it.type = ItemType::Toggle;
+        bool val = false;
+        setsysGetConsoleInformationUploadFlag(&val);
+        it.boolVal = val;
+        it.anim01 = val ? 1.f : 0.f;
+        it.onChange = [](SettingItem& self) {
+            setsysSetConsoleInformationUploadFlag(self.boolVal);
+        };
+        t.items.push_back(std::move(it));
+    }
+
+    return t;
+}

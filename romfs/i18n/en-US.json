@@ -1,0 +1,196 @@
+{
+  "common": {
+    "auto": "Auto",
+    "na": "N/A",
+    "active": "Active"
+  },
+  "sidebar": {
+    "album": "Album",
+    "eshop": "eShop",
+    "settings": "Settings",
+    "controllers": "Controllers",
+    "sleep": "Sleep",
+    "music": "Music"
+  },
+  "settings": {
+    "tabs": {
+      "system": "System",
+      "audio": "Audio",
+      "display": "Display",
+      "internet": "Internet",
+      "controllers": "Controllers",
+      "bluetooth": "Bluetooth",
+      "sleep": "Sleep",
+      "music": "Music",
+      "theme": "Theme",
+      "about": "About"
+    },
+    "system": {
+      "firmware": "Firmware Version",
+      "custom_firmware": "Custom Firmware",
+      "not_detected": "Not detected",
+      "emunand": "EmuNAND",
+      "inactive_sysnand": "Inactive / SysNAND",
+      "console_nickname": "Console Nickname",
+      "serial_number": "Serial Number",
+      "timezone": "Timezone",
+      "usb30": "USB 3.0",
+      "usb30_desc": "Enable USB 3.0 for faster transfer speeds.",
+      "battery_lot": "Battery Lot",
+      "ui_language": "UI Language",
+      "console_language": "Console Language",
+      "region": "Region",
+      "region_japan": "Japan",
+      "region_usa": "USA",
+      "region_europe": "Europe",
+      "region_australia": "Australia",
+      "region_hong_kong": "Hong Kong",
+      "region_taiwan": "Taiwan",
+      "region_south_korea": "South Korea",
+      "auto_update": "Auto Update",
+      "error_reporting": "Error Reporting"
+    },
+    "audio": {
+      "speaker_auto_mute": "Speaker Auto-Mute",
+      "speaker_auto_mute_desc": "Mute speakers automatically when headphones are connected.",
+      "headphone_warning": "Headphone Volume Warning",
+      "acknowledged": "Acknowledged",
+      "tv_audio_output": "TV Audio Output",
+      "tv_audio_output_desc": "Select audio format sent to TV over HDMI.",
+      "mono": "Mono",
+      "stereo": "Stereo",
+      "surround": "Surround",
+      "tv_resolution": "TV Resolution",
+      "tv_resolution_desc": "Adjust HDMI resolution. Auto uses recommended value.",
+      "res_720p": "720p",
+      "res_1080p": "1080p",
+      "hdmi_rgb_range": "HDMI RGB Range",
+      "hdmi_rgb_range_desc": "Full for PC monitors, Limited for most TVs.",
+      "full": "Full",
+      "limited": "Limited"
+    },
+    "display": {
+      "brightness": "Brightness",
+      "auto_brightness": "Auto-Brightness",
+      "auto_brightness_desc": "Adjust brightness automatically based on ambient light.",
+      "burn_in": "Screen Burn-In Reduction",
+      "burn_in_desc": "Reduce screen burn-in during long usage.",
+      "tv_screen_size": "TV Screen Size",
+      "tv_screen_size_desc": "Adjust overscan so the full image is visible.",
+      "album_storage": "Primary Album Storage",
+      "album_storage_desc": "Where screenshots and videos are saved.",
+      "album_sd": "SD Card",
+      "album_nand": "NAND",
+      "ui_wireframe": "UI Wireframe",
+      "ui_wireframe_desc": "Show outlines of all Box widgets for layout debugging."
+    },
+    "internet": {
+      "wifi_ssid": "WiFi Network",
+      "ip_address": "IP Address",
+      "not_connected": "Not connected",
+      "wifi": "WiFi",
+      "wifi_desc": "Enable or disable the wireless LAN radio.",
+      "auto_app_download": "Auto App Download",
+      "auto_app_download_desc": "Automatically download updates for installed games.",
+      "mac_address": "MAC Address",
+      "dns": "DNS",
+      "dns_auto": "Auto (DHCP)"
+    },
+    "controllers": {
+      "vibration": "Vibration",
+      "usb_wired": "USB Wired Communication",
+      "usb_wired_desc": "Use USB wired mode to reduce latency on compatible controllers.",
+      "nfc": "NFC (amiibo)"
+    },
+    "bluetooth": {
+      "bluetooth": "Bluetooth",
+      "afh": "Bluetooth AFH"
+    },
+    "sleep": {
+      "1min": "1 min",
+      "3min": "3 min",
+      "5min": "5 min",
+      "10min": "10 min",
+      "30min": "30 min",
+      "1h": "1 hour",
+      "2h": "2 hours",
+      "3h": "3 hours",
+      "6h": "6 hours",
+      "12h": "12 hours",
+      "never": "Never",
+      "handheld": "Handheld Auto-Sleep",
+      "handheld_desc": "Idle delay before automatic sleep in handheld mode.",
+      "docked": "Docked Auto-Sleep",
+      "docked_desc": "Idle delay before automatic sleep while docked.",
+      "media_sleep": "Sleep While Playing Media",
+      "media_sleep_desc": "Allow the console to auto-sleep even during media playback.",
+      "wake_power": "Wake at Power State Change",
+      "wake_power_desc": "Wake the console when the AC adapter is connected or disconnected."
+    },
+    "theme": {
+      "preset": "Preset",
+      "menu_mode": "Menu Mode",
+      "mode_dark": "Dark",
+      "mode_light": "Light",
+      "accent": "Accent",
+      "background": "Background",
+      "bg_accent": "Background Accent",
+      "shapes": "Floating Shapes",
+      "delete_preset": "Delete Preset",
+      "save_preset": "Save as Preset",
+      "reset_defaults": "Reset to Defaults",
+      "builtin_readonly": "Built-in presets cannot be deleted."
+    },
+    "music": {
+      "sound_preset": "Sound Preset",
+      "menu_music": "Menu Music",
+      "music_volume": "Music Volume",
+      "sfx_volume": "SFX Volume",
+      "next_track": "Next Track",
+      "track_changed": "Track changed"
+    },
+    "about": {
+      "version": "Version",
+      "author": "Author",
+      "license": "License",
+      "license_value": "GPL-2.0",
+      "acknowledgements": "Acknowledgements",
+      "acknowledgements_desc": "Special thanks to everyone who contributed to this project.",
+      "source_code": "Source Code",
+      "source_code_value": "github.com/PoloNX/SwitchU"
+    }
+  },
+  "userselect": {
+    "title": "Who's playing?"
+  },
+  "languages": {
+    "ja-JP": "Japanese",
+    "en-US": "American English",
+    "fr-FR": "French",
+    "de-DE": "German",
+    "it-IT": "Italian",
+    "es-ES": "Spanish",
+    "zh-CN": "Chinese",
+    "ko-KR": "Korean",
+    "nl-NL": "Dutch",
+    "pt-PT": "Portuguese",
+    "ru-RU": "Russian",
+    "zh-TW": "Traditional Chinese",
+    "en-GB": "British English",
+    "fr-CA": "French (Canada)",
+    "es-419": "Spanish (Latin America)",
+    "pt-BR": "Brazilian Portuguese"
+  },
+  "error": {
+    "title": "Cannot Launch",
+    "gamecard_not_inserted": "Game card is not inserted.",
+    "needs_verify": "Game data needs verification.",
+    "needs_update": "A required update is available.",
+    "no_contents": "Game data is missing.",
+    "cannot_launch": "This game cannot be launched."
+  },
+  "button": {
+    "ok": "OK",
+    "cancel": "Cancel"
+  }
+}

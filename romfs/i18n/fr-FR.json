@@ -1,0 +1,196 @@
+{
+  "common": {
+    "auto": "Auto",
+    "na": "N/A",
+    "active": "Actif"
+  },
+  "sidebar": {
+    "album": "Album",
+    "eshop": "eShop",
+    "settings": "Paramètres",
+    "controllers": "Manettes",
+    "sleep": "Veille",
+    "music": "Musique"
+  },
+  "settings": {
+    "tabs": {
+      "system": "Système",
+      "audio": "Audio",
+      "display": "Affichage",
+      "internet": "Internet",
+      "controllers": "Manettes",
+      "bluetooth": "Bluetooth",
+      "sleep": "Veille",
+      "music": "Musique",
+      "theme": "Thème",
+      "about": "À propos"
+    },
+    "system": {
+      "firmware": "Version du firmware",
+      "custom_firmware": "Custom Firmware",
+      "not_detected": "Non détecté",
+      "emunand": "EmuNAND",
+      "inactive_sysnand": "Inactif / SysNAND",
+      "console_nickname": "Surnom de la console",
+      "serial_number": "Numéro de série",
+      "timezone": "Fuseau horaire",
+      "usb30": "USB 3.0",
+      "usb30_desc": "Active l'USB 3.0 pour des transferts plus rapides.",
+      "battery_lot": "Lot de batterie",
+      "ui_language": "Langue de l'interface",
+      "console_language": "Langue de la console",
+      "region": "Région",
+      "region_japan": "Japon",
+      "region_usa": "États-Unis",
+      "region_europe": "Europe",
+      "region_australia": "Australie",
+      "region_hong_kong": "Hong Kong",
+      "region_taiwan": "Taïwan",
+      "region_south_korea": "Corée du Sud",
+      "auto_update": "Mise à jour automatique",
+      "error_reporting": "Rapports d'erreurs"
+    },
+    "audio": {
+      "speaker_auto_mute": "Coupure auto des haut-parleurs",
+      "speaker_auto_mute_desc": "Coupe les haut-parleurs automatiquement quand un casque est branché.",
+      "headphone_warning": "Avertissement volume casque",
+      "acknowledged": "Acquitté",
+      "tv_audio_output": "Sortie audio TV",
+      "tv_audio_output_desc": "Choisit le format audio envoyé au téléviseur via HDMI.",
+      "mono": "Mono",
+      "stereo": "Stéréo",
+      "surround": "Surround",
+      "tv_resolution": "Résolution TV",
+      "tv_resolution_desc": "Ajuste la résolution HDMI. Auto utilise la valeur recommandée.",
+      "res_720p": "720p",
+      "res_1080p": "1080p",
+      "hdmi_rgb_range": "Plage RGB HDMI",
+      "hdmi_rgb_range_desc": "Full pour moniteur PC, Limited pour la plupart des TV.",
+      "full": "Complet",
+      "limited": "Limité"
+    },
+    "display": {
+      "brightness": "Luminosité",
+      "auto_brightness": "Luminosité auto",
+      "auto_brightness_desc": "Ajuste automatiquement la luminosité selon la lumière ambiante.",
+      "burn_in": "Réduction du marquage",
+      "burn_in_desc": "Réduit le marquage de l'écran en usage prolongé.",
+      "tv_screen_size": "Taille d'écran TV",
+      "tv_screen_size_desc": "Corrige l'overscan pour que toute l'image soit visible.",
+      "album_storage": "Stockage album",
+      "album_storage_desc": "Où les captures d'écran et vidéos sont sauvegardées.",
+      "album_sd": "Carte SD",
+      "album_nand": "NAND",
+      "ui_wireframe": "Wireframe UI",
+      "ui_wireframe_desc": "Affiche le contour de toutes les Box pour le debug layout."
+    },
+    "internet": {
+      "wifi_ssid": "Réseau WiFi",
+      "ip_address": "Adresse IP",
+      "not_connected": "Non connecté",
+      "wifi": "WiFi",
+      "wifi_desc": "Active ou désactive la radio WiFi.",
+      "auto_app_download": "Téléchargement auto",
+      "auto_app_download_desc": "Télécharge automatiquement les mises à jour des jeux installés.",
+      "mac_address": "Adresse MAC",
+      "dns": "DNS",
+      "dns_auto": "Auto (DHCP)"
+    },
+    "controllers": {
+      "vibration": "Vibration",
+      "usb_wired": "Communication USB filaire",
+      "usb_wired_desc": "Utilise l'USB filaire pour réduire la latence des manettes compatibles.",
+      "nfc": "NFC (amiibo)"
+    },
+    "bluetooth": {
+      "bluetooth": "Bluetooth",
+      "afh": "Bluetooth AFH"
+    },
+    "sleep": {
+      "1min": "1 min",
+      "3min": "3 min",
+      "5min": "5 min",
+      "10min": "10 min",
+      "30min": "30 min",
+      "1h": "1 heure",
+      "2h": "2 heures",
+      "3h": "3 heures",
+      "6h": "6 heures",
+      "12h": "12 heures",
+      "never": "Jamais",
+      "handheld": "Veille auto en portable",
+      "handheld_desc": "Délai avant veille automatique en mode portable.",
+      "docked": "Veille auto en dock",
+      "docked_desc": "Délai avant veille automatique quand la console est dockée.",
+      "media_sleep": "Veille pendant les médias",
+      "media_sleep_desc": "Permet la mise en veille automatique pendant la lecture de médias.",
+      "wake_power": "Réveil au changement d'alimentation",
+      "wake_power_desc": "Réveille la console quand l'adaptateur secteur est connecté ou déconnecté."
+    },
+    "theme": {
+      "preset": "Preset",
+      "menu_mode": "Mode du menu",
+      "mode_dark": "Sombre",
+      "mode_light": "Clair",
+      "accent": "Accent",
+      "background": "Arrière-plan",
+      "bg_accent": "Accent arrière-plan",
+      "shapes": "Formes flottantes",
+      "delete_preset": "Supprimer le preset",
+      "save_preset": "Enregistrer comme preset",
+      "reset_defaults": "Réinitialiser",
+      "builtin_readonly": "Les presets intégrés ne peuvent pas être supprimés."
+    },
+    "music": {
+      "sound_preset": "Preset sonore",
+      "menu_music": "Musique du menu",
+      "music_volume": "Volume musique",
+      "sfx_volume": "Volume SFX",
+      "next_track": "Piste suivante",
+      "track_changed": "Piste changée"
+    },
+    "about": {
+      "version": "Version",
+      "author": "Auteur",
+      "license": "Licence",
+      "license_value": "GPL-2.0",
+      "acknowledgements": "Remerciements",
+      "acknowledgements_desc": "Merci à toutes les personnes ayant contribué à ce projet.",
+      "source_code": "Code source",
+      "source_code_value": "github.com/PoloNX/SwitchU"
+    }
+  },
+  "userselect": {
+    "title": "Qui joue ?"
+  },
+  "languages": {
+    "ja-JP": "Japonais",
+    "en-US": "Anglais (US)",
+    "fr-FR": "Français",
+    "de-DE": "Allemand",
+    "it-IT": "Italien",
+    "es-ES": "Espagnol",
+    "zh-CN": "Chinois",
+    "ko-KR": "Coréen",
+    "nl-NL": "Néerlandais",
+    "pt-PT": "Portugais",
+    "ru-RU": "Russe",
+    "zh-TW": "Chinois traditionnel",
+    "en-GB": "Anglais (UK)",
+    "fr-CA": "Français (Canada)",
+    "es-419": "Espagnol (Amérique latine)",
+    "pt-BR": "Portugais brésilien"
+  },
+  "error": {
+    "title": "Impossible de lancer",
+    "gamecard_not_inserted": "La carte de jeu n'est pas insérée.",
+    "needs_verify": "Les données du jeu doivent être vérifiées.",
+    "needs_update": "Une mise à jour requise est disponible.",
+    "no_contents": "Les données du jeu sont manquantes.",
+    "cannot_launch": "Ce jeu ne peut pas être lancé."
+  },
+  "button": {
+    "ok": "OK",
+    "cancel": "Annuler"
+  }
+}
