@@ -45,7 +45,7 @@ void AppletLauncher::setStartupStatus(uint64_t suspendedTitleId, bool appRunning
 #ifdef SWITCHU_HOMEBREW
 
 void AppletLauncher::launchAlbum()             {}
-void AppletLauncher::launchEShop()             {}
+void AppletLauncher::launchMiiEditor()         {}
 void AppletLauncher::launchControllerPairing() {}
 void AppletLauncher::launchNetConnect()        {}
 void AppletLauncher::enterSleep()              {}
@@ -65,9 +65,14 @@ void AppletLauncher::launchAlbum() {
     }
 }
 
-void AppletLauncher::launchEShop() {
-    DebugLog::log("[launcher] requesting eShop launch");
-    switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchEShop);
+void AppletLauncher::launchMiiEditor() {
+    DebugLog::log("[launcher] requesting Mii Editor launch via daemon");
+    Result rc = switchu::menu::smi_cmd::sendSimple(switchu::smi::SystemMessage::LaunchMiiEditor);
+    DebugLog::log("[launcher] Mii Editor rc=0x%X", rc);
+    if (R_SUCCEEDED(rc)) {
+        if (m_cb.playSfxModalHide) m_cb.playSfxModalHide();
+        if (m_cb.requestExit)      m_cb.requestExit();
+    }
 }
 
 void AppletLauncher::launchControllerPairing() {

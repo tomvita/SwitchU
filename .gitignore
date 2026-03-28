@@ -4,11 +4,12 @@ build_switch/
 *.nro
 *.nacp
 *.nsp
+*.zip
+*.log
 sd_out/
 build/
 build_nro/
 .vscode/
 .xmake/
-# OS junk
 .DS_Store
 Thumbs.db

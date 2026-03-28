@@ -6,7 +6,7 @@
   },
   "sidebar": {
     "album": "Album",
-    "eshop": "eShop",
+    "mii_editor": "Editeur Mii",
     "settings": "Paramètres",
     "controllers": "Manettes",
     "sleep": "Veille",
@@ -104,7 +104,20 @@
     },
     "bluetooth": {
       "bluetooth": "Bluetooth",
-      "afh": "Bluetooth AFH"
+      "afh": "Bluetooth AFH",
+      "general": "Général",
+      "connected_device": "Appareil connecté",
+      "no_device_connected": "Aucun appareil connecté",
+      "disconnect": "Déconnecter",
+      "paired_devices": "Appareils associés",
+      "no_paired_devices": "Aucun appareil associé",
+      "discover_devices": "Découvrir des appareils",
+      "start_search": "Rechercher des appareils...",
+      "stop_search": "Arrêter la recherche",
+      "connect": "Connecter",
+      "unpair": "Dissocier",
+      "pair_connect": "Associer et connecter",
+      "device_actions": "Actions de l'appareil"
     },
     "sleep": {
       "1min": "1 min",
@@ -155,7 +168,7 @@
       "license": "Licence",
       "license_value": "GPL-2.0",
       "acknowledgements": "Remerciements",
-      "acknowledgements_desc": "Merci à toutes les personnes ayant contribué à ce projet.",
+      "acknowledgements_desc": "Merci à xortroll pour l'aide vis à vis du développements.",
       "source_code": "Code source",
       "source_code_value": "github.com/PoloNX/SwitchU"
     }

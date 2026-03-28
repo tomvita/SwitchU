@@ -95,6 +95,7 @@ target("nxtc")
     on_install(function(target) end)
 target_end()
 
+
 -- ── Homebrew (monolithic NRO) — original single-binary build ─────────────────
 target("SwitchU")
     set_kind("binary")
@@ -117,6 +118,7 @@ target("SwitchU")
     add_files("projects/menu/src/settings/tabs/*.cpp")
     add_files("projects/menu/src/sidebar/*.cpp")
     add_files("projects/menu/src/launcher/*.cpp")
+    add_files("projects/menu/src/bluetooth/*.cpp")
 
     add_includedirs("projects/menu/src", {public = false})
 
@@ -202,6 +204,7 @@ target("switchu-menu")
     add_files("projects/menu/src/settings/tabs/*.cpp")
     add_files("projects/menu/src/sidebar/*.cpp")
     add_files("projects/menu/src/launcher/*.cpp")
+    add_files("projects/menu/src/bluetooth/*.cpp")
 
     add_includedirs("projects/common/include",  {public = false})
     add_includedirs("projects/menu/src",         {public = false})

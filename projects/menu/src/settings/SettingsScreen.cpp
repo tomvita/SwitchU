@@ -202,6 +202,24 @@ std::shared_ptr<nxui::Box> SettingsScreen::makeItemWidget(SettingItem& item) {
     return settings::widgets::createSettingItemWidget(item, ctx);
 }
 
+void SettingsScreen::rebuildCurrentTab() {
+    int oldFocus = m_contentIdx;
+    float oldScroll = m_scrollTarget;
+    rebuildContentItems();
+    clampContentIdx();
+    if (focusableCount() > 0)
+        m_contentIdx = std::clamp(oldFocus, 0, focusableCount() - 1);
+    else
+        m_contentIdx = 0;
+    m_scrollTarget = oldScroll;
+    m_scrollY = oldScroll;
+}
+
+void SettingsScreen::requestDialog(const std::string& title, const std::string& msg,
+                                   std::vector<DialogButtonDef> buttons) {
+    if (m_dialogRequestCb) m_dialogRequestCb(title, msg, std::move(buttons));
+}
+
 
 
 void SettingsScreen::updateThemeSliders(const ThemeColorSet& colors) {
@@ -598,6 +616,210 @@ void SettingsScreen::scrollToFocused() {
         m_scrollTarget = itemY + kRowHeight - cr.height;
 }
 
+void SettingsScreen::handleTouch(nxui::Input& input) {
+    if (!m_active || m_animating) return;
+
+    nxui::Rect panel = panelRect();
+    nxui::Rect tr = tabsRect(panel);
+    nxui::Rect cr = contentRect(panel);
+
+    if (input.touchDown()) {
+        float tx = input.touchX();
+        float ty = input.touchY();
+        m_touchTarget = TouchTarget::None;
+        m_touchHitIndex = -1;
+        m_touchOnSelected = false;
+
+        // Check dropdown first if open
+        if (m_dropdownOpen && m_dropdownRawIdx >= 0 && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
+            auto& items = m_tabs[m_tabIndex].items;
+            if (m_dropdownRawIdx < (int)items.size()) {
+                auto& item = items[m_dropdownRawIdx];
+                int total = (int)item.options.size();
+                int visible = std::min(total, 6);
+                float optH = 36.f;
+                float listH = visible * optH + 10.f;
+
+                float y = cr.y - m_scrollY;
+                for (int i = 0; i < m_dropdownRawIdx; ++i)
+                    y += (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
+                float rowH = kRowHeight;
+
+                float ctrlX = cr.x + cr.width * 0.55f;
+                float ctrlW = cr.width * 0.42f;
+                float dy = y + rowH + 6.f;
+                if (dy + listH > cr.bottom() - 4.f)
+                    dy = y - listH - 6.f;
+
+                nxui::Rect dropRect = { ctrlX, dy, ctrlW, listH };
+                if (dropRect.contains(tx, ty)) {
+                    m_touchTarget = TouchTarget::Dropdown;
+                    int start = 0;
+                    if (total > visible)
+                        start = std::clamp(m_dropdownHover - visible / 2, 0, total - visible);
+                    float localY = ty - dy - 5.f;
+                    int idx = start + (int)(localY / optH);
+                    idx = std::clamp(idx, 0, total - 1);
+                    m_touchHitIndex = idx;
+                    m_touchOnSelected = (idx == m_dropdownHover);
+                    return;
+                }
+            }
+        }
+
+        // Check color picker if open
+        if (m_colorPickerOpen) {
+            m_touchTarget = TouchTarget::ColorPicker;
+            return;
+        }
+
+        // Check tabs
+        if (tr.contains(tx, ty)) {
+            m_touchTarget = TouchTarget::Tab;
+            int idx = (int)((ty - tr.y) / kTabRowHeight);
+            idx = std::clamp(idx, 0, (int)m_tabs.size() - 1);
+            m_touchHitIndex = idx;
+            m_touchOnSelected = (idx == m_tabIndex && m_focusArea == FocusArea::Tabs);
+            return;
+        }
+
+        // Check content items
+        if (cr.contains(tx, ty) && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
+            auto& items = m_tabs[m_tabIndex].items;
+            float y = cr.y - m_scrollY;
+            int focIdx = 0;
+            for (int i = 0; i < (int)items.size(); ++i) {
+                float h = (items[i].type == ItemType::Section) ? kSectionHeight : kRowHeight;
+                if (items[i].focusable()) {
+                    nxui::Rect itemRect = { cr.x, y, cr.width, h };
+                    if (itemRect.contains(tx, ty) && y >= cr.y && y + h <= cr.bottom()) {
+                        m_touchTarget = TouchTarget::Content;
+                        m_touchHitIndex = focIdx;
+                        m_touchOnSelected = (focIdx == m_contentIdx && m_focusArea == FocusArea::Content);
+                        return;
+                    }
+                    ++focIdx;
+                }
+                y += h;
+            }
+        }
+    }
+
+    if (input.touchUp()) {
+        float dx = std::abs(input.touchDeltaX());
+        float dy = std::abs(input.touchDeltaY());
+        constexpr float kTapThreshold = 20.f;
+
+        if (dx < kTapThreshold && dy < kTapThreshold) {
+            switch (m_touchTarget) {
+            case TouchTarget::Tab:
+                if (m_touchHitIndex >= 0 && m_touchHitIndex < (int)m_tabs.size()) {
+                    if (m_touchOnSelected) {
+                        // Tap on selected tab: enter content
+                        if (focusableCount() > 0) {
+                            m_focusArea = FocusArea::Content;
+                            m_contentIdx = 0;
+                            if (m_navSfxCb) m_navSfxCb();
+                        }
+                    } else {
+                        // Tap on different tab: switch to it
+                        m_focusArea = FocusArea::Tabs;
+                        if (m_tabIndex != m_touchHitIndex) {
+                            m_tabSwitchDir = (m_touchHitIndex > m_tabIndex) ? 1 : -1;
+                            m_tabIndex = m_touchHitIndex;
+                            m_contentIdx = 0;
+                            m_scrollY = 0;
+                            m_scrollTarget = 0;
+                            m_tabReveal.setImmediate(0.f);
+                            m_tabReveal.set(1.f, 0.24f, nxui::Easing::outCubic);
+                            m_contentSlideAnim.setImmediate(0.f);
+                            m_contentSlideAnim.set(1.f, 0.28f, nxui::Easing::outCubic);
+                            m_tabAccentW.setImmediate(1.f);
+                            m_tabAccentW.set(3.f, 0.32f, nxui::Easing::outExpo);
+                            m_dropdownOpen = false;
+                            m_dropdownRawIdx = -1;
+                            m_dropdownAnim.setImmediate(0.f);
+                            m_colorPickerOpen = false;
+                            m_colorPickerRawIdx = -1;
+                            m_colorPickerAnim.setImmediate(0.f);
+                            rebuildContentItems();
+                        }
+                        if (m_navSfxCb) m_navSfxCb();
+                    }
+                }
+                break;
+
+            case TouchTarget::Content:
+                if (m_touchHitIndex >= 0 && m_touchHitIndex < focusableCount()) {
+                    if (m_touchOnSelected) {
+                        // Tap on selected item: activate
+                        onPressA();
+                    } else {
+                        // Tap on different item: select it
+                        m_focusArea = FocusArea::Content;
+                        m_contentIdx = m_touchHitIndex;
+                        scrollToFocused();
+                        if (m_navSfxCb) m_navSfxCb();
+                    }
+                }
+                break;
+
+            case TouchTarget::Dropdown:
+                if (m_touchHitIndex >= 0) {
+                    if (m_touchOnSelected) {
+                        // Tap on selected dropdown option: select it
+                        if (m_dropdownRawIdx >= 0 && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
+                            auto& items = m_tabs[m_tabIndex].items;
+                            if (m_dropdownRawIdx < (int)items.size()) {
+                                auto& sel = items[m_dropdownRawIdx];
+                                int n = std::max(1, (int)sel.options.size());
+                                sel.intVal = std::clamp(m_dropdownHover, 0, n - 1);
+                                if (sel.onChange) sel.onChange(sel);
+                                if (m_activateSfxCb) m_activateSfxCb();
+                            }
+                        }
+                        m_dropdownOpen = false;
+                        m_dropdownRawIdx = -1;
+                        m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
+                    } else {
+                        // Tap on different dropdown option: hover it
+                        m_dropdownHover = m_touchHitIndex;
+                        if (m_navSfxCb) m_navSfxCb();
+                    }
+                }
+                break;
+
+            case TouchTarget::ColorPicker:
+                // Close color picker on tap
+                m_colorPickerOpen = false;
+                m_colorPickerRawIdx = -1;
+                m_colorPickerAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
+                break;
+
+            case TouchTarget::None:
+                // Tap outside: close dropdowns/pickers or go back
+                if (m_dropdownOpen) {
+                    m_dropdownOpen = false;
+                    m_dropdownRawIdx = -1;
+                    m_dropdownAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
+                } else if (m_colorPickerOpen) {
+                    m_colorPickerOpen = false;
+                    m_colorPickerRawIdx = -1;
+                    m_colorPickerAnim.set(0.f, 0.10f, nxui::Easing::outCubic);
+                } else if (!panel.contains(input.touchX(), input.touchY())) {
+                    // Tap outside panel: close settings
+                    hide();
+                }
+                break;
+            }
+        }
+
+        m_touchTarget = TouchTarget::None;
+        m_touchHitIndex = -1;
+        m_touchOnSelected = false;
+    }
+}
+
 
 void SettingsScreen::update(float dt) {
     if (m_deferredRefresh) {
@@ -623,6 +845,11 @@ void SettingsScreen::update(float dt) {
     }
     m_scrollY += (m_scrollTarget - m_scrollY) * std::min(1.f, dt * 14.f);
     m_uiTime += dt;
+
+    if (m_active && !m_animating && m_tabIndex >= 0 && m_tabIndex < (int)m_tabs.size()) {
+        auto& tab = m_tabs[m_tabIndex];
+        if (tab.onUpdate) tab.onUpdate(tab, *this);
+    }
 
     m_focusCursor.update(dt);
     m_tabReveal.update(std::min(dt, 0.03f));

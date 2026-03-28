@@ -15,7 +15,7 @@ class SidebarManager {
 public:
     struct Actions {
         std::function<void()> onAlbum;
-        std::function<void()> onEShop;
+        std::function<void()> onMiiEditor;
         std::function<void()> onControllers;
         std::function<void()> onSleep;
         std::function<void()> onSettings;

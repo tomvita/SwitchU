@@ -17,7 +17,7 @@ public:
     void init(Callbacks cbs);
 
     void launchAlbum();
-    void launchEShop();
+    void launchMiiEditor();
     void launchControllerPairing();
     void launchNetConnect();
     void enterSleep();

@@ -6,7 +6,7 @@
   },
   "sidebar": {
     "album": "Album",
-    "eshop": "eShop",
+    "mii_editor": "Mii Editor",
     "settings": "Settings",
     "controllers": "Controllers",
     "sleep": "Sleep",
@@ -104,7 +104,20 @@
     },
     "bluetooth": {
       "bluetooth": "Bluetooth",
-      "afh": "Bluetooth AFH"
+      "afh": "Bluetooth AFH",
+      "general": "General",
+      "connected_device": "Connected Device",
+      "no_device_connected": "No device connected",
+      "disconnect": "Disconnect",
+      "paired_devices": "Paired Devices",
+      "no_paired_devices": "No paired devices",
+      "discover_devices": "Discover Devices",
+      "start_search": "Search for devices...",
+      "stop_search": "Stop searching",
+      "connect": "Connect",
+      "unpair": "Unpair",
+      "pair_connect": "Pair & Connect",
+      "device_actions": "Device Actions"
     },
     "sleep": {
       "1min": "1 min",
@@ -155,7 +168,7 @@
       "license": "License",
       "license_value": "GPL-2.0",
       "acknowledgements": "Acknowledgements",
-      "acknowledgements_desc": "Special thanks to everyone who contributed to this project.",
+      "acknowledgements_desc": "Thanks to xortroll for your help with your project uLaunch and for your support and advice during development.",
       "source_code": "Source Code",
       "source_code_value": "github.com/PoloNX/SwitchU"
     }

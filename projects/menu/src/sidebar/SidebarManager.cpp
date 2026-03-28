@@ -7,16 +7,15 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
                            const std::string& assetsBase,
                            const Actions& actions) {
     std::string iconsBase = assetsBase + "/icons";
+
     static const char* iconFiles[] = {
-        "album.png",
-        "eshop.png",
-        "controller.png",
-        "power.png",
+        "album.png", "mii_editor.png", "controller.png", "power.png", "miiverse.png", "settings.png",
     };
     m_icons.clear();
-    m_icons.resize(4);
-    for (int i = 0; i < 4; ++i)
-        m_icons[i].loadFromFile(gpu, ren, iconsBase + "/" + iconFiles[i]);
+    m_icons.resize(6);
+    for (int i = 0; i < 6; ++i) {
+        bool loaded = m_icons[i].loadFromFile(gpu, ren, iconsBase + "/" + iconFiles[i]);
+    }
 
     constexpr float btnSize = 70.f;
     constexpr float gap     = 16.f;
@@ -50,11 +49,11 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
         album->setRect({leftX, startY + 0.f * (btnSize + gap), btnSize, btnSize});
         m_leftButtons.push_back(std::move(album));
 
-        auto eshop = makeBtn(&m_icons[1], "sidebar.eshop", "eShop", actions.onEShop);
-        eshop->setRect({leftX, startY + 1.f * (btnSize + gap), btnSize, btnSize});
-        m_leftButtons.push_back(std::move(eshop));
+        auto miiEditor = makeBtn(&m_icons[1], "sidebar.mii_editor", "Mii Editor", actions.onMiiEditor);
+        miiEditor->setRect({leftX, startY + 1.f * (btnSize + gap), btnSize, btnSize});
+        m_leftButtons.push_back(std::move(miiEditor));
 
-        auto settings = makeBtn(&m_icons[1], "sidebar.settings", "Settings", actions.onSettings);
+        auto settings = makeBtn(&m_icons[5], "sidebar.settings", "Settings", actions.onSettings);
         m_settingsButton = settings.get();
         settings->setRect({leftX, startY + 2.f * (btnSize + gap), btnSize, btnSize});
         m_leftButtons.push_back(std::move(settings));
@@ -69,33 +68,33 @@ void SidebarManager::build(nxui::GpuDevice& gpu, nxui::Renderer& ren,
         sleep->setRect({rightX, startY + 1.f * (btnSize + gap), btnSize, btnSize});
         m_rightButtons.push_back(std::move(sleep));
 
-        auto miiverse = makeBtn(&m_icons[1], "sidebar.miiverse", "Miiverse", actions.onMiiverse);
+        auto miiverse = makeBtn(&m_icons[4], "sidebar.miiverse", "Miiverse", actions.onMiiverse);
         miiverse->setRect({rightX, startY + 2.f * (btnSize + gap), btnSize, btnSize});
         m_rightButtons.push_back(std::move(miiverse));
     }
 
-    static const struct { int iconIdx; const char* webpFile; } animDefs[] = {
-        { 0, "album.webp"      },
-        { 1, "eshop.webp"      },
-        { 2, "controller.webp" },
-        { 3, "power.webp"      },
-    };
-
-    auto buttonForIcon = [&](int iconIdx) -> AppletButton* {
-        switch (iconIdx) {
-            case 0: return m_leftButtons.size()  > 0 ? m_leftButtons[0].get()  : nullptr;
-            case 1: return m_leftButtons.size()  > 1 ? m_leftButtons[1].get()  : nullptr;
-            case 2: return m_rightButtons.size() > 0 ? m_rightButtons[0].get() : nullptr;
-            case 3: return m_rightButtons.size() > 1 ? m_rightButtons[1].get() : nullptr;
-            default: return nullptr;
-        }
+    static const struct { int iconIdx; const char* webpFile; bool useFirstFrame; } animDefs[] = {
+        { 0, "album.webp",      false },
+        { 1, "mii_editor.webp", false },
+        { 2, "controller.webp", true  },
+        { 3, "power.webp",      false },
+        { 4, "miiverse.webp",   false },
+        { 5, "settings.webp",   false },
     };
 
     for (const auto& def : animDefs) {
-        AppletButton* btn = buttonForIcon(def.iconIdx);
-        if (!btn) continue;
-        tryLoadAnimation(gpu, ren, iconsBase + "/" + def.webpFile,
-                         btn, &m_icons[def.iconIdx]);
+        AppletButton* btn = nullptr;
+        if (def.iconIdx == 0) btn = m_leftButtons[0].get();
+        else if (def.iconIdx == 1) btn = m_leftButtons[1].get();
+        else if (def.iconIdx == 2) btn = m_rightButtons[0].get();
+        else if (def.iconIdx == 3) btn = m_rightButtons[1].get();
+        else if (def.iconIdx == 4) btn = m_rightButtons[2].get();
+        else if (def.iconIdx == 5) btn = m_leftButtons[2].get();
+        if (btn) {
+            nxui::Texture* staticTex = def.useFirstFrame ? nullptr : &m_icons[def.iconIdx];
+            tryLoadAnimation(gpu, ren, iconsBase + "/" + def.webpFile, btn, staticTex);
+
+        }
     }
 }
 
@@ -111,17 +110,18 @@ void SidebarManager::tryLoadAnimation(nxui::GpuDevice& gpu, nxui::Renderer& ren,
     }
 }
 
-
 void SidebarManager::update(float dt, nxui::Widget* focusedWidget) {
     for (auto& e : m_anims) {
         if (!e.button) continue;
         bool focused = (focusedWidget == e.button);
         e.anim.update(dt, focused);
-
         if (focused && e.anim.hasFrames()) {
             e.button->setIcon(e.anim.currentFrame());
         } else {
-            e.button->setIcon(e.staticTex);
+            // staticTex == nullptr: use frame 0 of the animation as idle
+            nxui::Texture* idle = e.staticTex ? e.staticTex
+                                              : (e.anim.hasFrames() ? e.anim.currentFrame() : nullptr);
+            e.button->setIcon(idle);
         }
     }
 }

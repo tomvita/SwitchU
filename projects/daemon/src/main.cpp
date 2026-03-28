@@ -127,7 +127,10 @@ static AccountUid g_pendingUid = {};
 
 static bool g_pendingResume = false;
 static bool g_pendingAlbum = false;
+static bool g_pendingMiiEditor = false;
 static bool g_pendingNetConnect = false;
+static bool g_foregroundAppletActive = false;
+static bool g_pendingForegroundAppletHome = false;
 
 static smi::SystemStatus buildSystemStatus() {
     smi::SystemStatus st{};
@@ -239,6 +242,9 @@ static void handleGeneralChannel() {
             }
         } else if (daemon::menu_la::isActive()) {
             pushNotification(smi::MenuMessage::HomeRequest);
+        } else if (g_foregroundAppletActive) {
+            switchu::FileLog::log("[sams] -> Home requested while foreground applet active");
+            g_pendingForegroundAppletHome = true;
         }
         break;
         case 3:
@@ -275,6 +281,9 @@ static void handleAppletMessages() {
                 }
             } else if (daemon::menu_la::isActive()) {
                 pushNotification(smi::MenuMessage::HomeRequest);
+            } else if (g_foregroundAppletActive) {
+                switchu::FileLog::log("[ae] -> Home requested while foreground applet active");
+                g_pendingForegroundAppletHome = true;
             }
             break;
             case 22:
@@ -305,7 +314,9 @@ static void handleAppletMessages() {
 }
 
 
-static Result launchLibraryApplet(AppletId id, const char* name) {
+static Result launchLibraryApplet(AppletId id, const char* name,
+                                  const void* inData = nullptr, size_t inDataSize = 0,
+                                  u32 libAppletVersion = 0) {
     switchu::FileLog::log("[applet] launching %s", name);
     AppletHolder holder;
     Result rc = appletCreateLibraryApplet(&holder, id, LibAppletMode_AllForeground);
@@ -314,7 +325,59 @@ static Result launchLibraryApplet(AppletId id, const char* name) {
         return rc;
     }
 
-    appletHolderStart(&holder);
+    if (libAppletVersion != 0) {
+        LibAppletArgs args;
+        libappletArgsCreate(&args, libAppletVersion);
+        rc = libappletArgsPush(&args, &holder);
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[applet] %s args FAIL: 0x%X", name, rc);
+            appletHolderClose(&holder);
+            return rc;
+        }
+    }
+
+    if (inData && inDataSize > 0) {
+        AppletStorage inStor;
+        rc = appletCreateStorage(&inStor, inDataSize);
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[applet] %s in storage FAIL: 0x%X", name, rc);
+            appletHolderClose(&holder);
+            return rc;
+        }
+        appletStorageWrite(&inStor, 0, inData, inDataSize);
+        rc = appletHolderPushInData(&holder, &inStor);
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[applet] %s in data push FAIL: 0x%X", name, rc);
+            appletStorageClose(&inStor);
+            appletHolderClose(&holder);
+            return rc;
+        }
+    }
+
+    rc = appletHolderStart(&holder);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[applet] %s start FAIL: 0x%X", name, rc);
+        appletHolderClose(&holder);
+        return rc;
+    }
+
+    g_foregroundAppletActive = true;
+    g_pendingForegroundAppletHome = false;
+
+    while (appletHolderActive(&holder) && !appletHolderCheckFinished(&holder)) {
+        handleGeneralChannel();
+        handleAppletMessages();
+
+        if (g_pendingForegroundAppletHome) {
+            g_pendingForegroundAppletHome = false;
+            switchu::FileLog::log("[applet] %s exiting on HOME request", name);
+            appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
+        }
+
+        svcSleepThread(10'000'000ULL);
+    }
+
+    g_foregroundAppletActive = false;
     appletHolderJoin(&holder);
     appletHolderClose(&holder);
     switchu::FileLog::log("[applet] %s closed", name);
@@ -373,21 +436,26 @@ static void handleMenuCommand() {
 
     case smi::SystemMessage::LaunchAlbum:
         g_pendingAlbum = true;
+        g_pendingMiiEditor = false;
         g_pendingLaunch = false;
         g_pendingResume = false;
         switchu::FileLog::log("[smi] pending album launch (waiting for menu exit)");
         break;
 
+    case smi::SystemMessage::LaunchMiiEditor:
+        g_pendingMiiEditor = true;
+        g_pendingAlbum = false;
+        g_pendingLaunch = false;
+        g_pendingResume = false;
+        switchu::FileLog::log("[smi] pending Mii Editor launch (waiting for menu exit)");
+        break;
+
     case smi::SystemMessage::LaunchNetConnect:
         g_pendingNetConnect = true;
+        g_pendingMiiEditor = false;
         g_pendingLaunch = false;
         g_pendingResume = false;
         switchu::FileLog::log("[smi] pending NetConnect launch (waiting for menu exit)");
-        break;
-
-    case smi::SystemMessage::LaunchEShop:
-        switchu::FileLog::log("[smi] LaunchEShop ignored while menu active");
-        result = MAKERESULT(Module_Libnx, 0xFC);
         break;
 
     case smi::SystemMessage::LaunchControllers:
@@ -519,26 +587,29 @@ static void mainLoop() {
         } else if (g_pendingNetConnect) {
             g_pendingNetConnect = false;
             switchu::FileLog::log("[main] executing pending NetConnect launch");
-            AppletHolder holder;
-            Result rc = appletCreateLibraryApplet(&holder, AppletId_LibraryAppletNetConnect,
-                                                   LibAppletMode_AllForeground);
-            if (R_SUCCEEDED(rc)) {
-                LibAppletArgs args;
-                libappletArgsCreate(&args, 1);
-                libappletArgsPush(&args, &holder);
-                u32 netType = 1;
-                AppletStorage inStor;
-                if (R_SUCCEEDED(appletCreateStorage(&inStor, sizeof(netType)))) {
-                    appletStorageWrite(&inStor, 0, &netType, sizeof(netType));
-                    appletHolderPushInData(&holder, &inStor);
-                }
-                appletHolderStart(&holder);
-                appletHolderJoin(&holder);
-                appletHolderClose(&holder);
-            } else {
+            const u32 netType = 1;
+            Result rc = launchLibraryApplet(AppletId_LibraryAppletNetConnect,
+                                            "NetConnect", &netType,
+                                            sizeof(netType), 1);
+            if (R_FAILED(rc)) {
                 switchu::FileLog::log("[main] NetConnect create FAIL: 0x%X", rc);
             }
             switchu::FileLog::log("[main] relaunching menu after NetConnect");
+            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+        } else if (g_pendingMiiEditor) {
+            g_pendingMiiEditor = false;
+            switchu::FileLog::log("[main] executing pending Mii Editor launch");
+            const auto miiVer = hosversionAtLeast(10, 2, 0) ? 0x4 : 0x3;
+            const MiiLaAppletInput in = {
+                .version = miiVer,
+                .mode = MiiLaAppletMode_ShowMiiEdit,
+                .special_key_code = MiiSpecialKeyCode_Normal,
+            };
+            Result rc = launchLibraryApplet(AppletId_LibraryAppletMiiEdit,
+                                            "MiiEditor", &in, sizeof(in));
+            if (R_FAILED(rc))
+                switchu::FileLog::log("[main] pending Mii Editor FAIL: 0x%X", rc);
+            switchu::FileLog::log("[main] relaunching menu after Mii Editor");
             daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
         } else if (g_pendingLaunch) {
             g_pendingLaunch = false;

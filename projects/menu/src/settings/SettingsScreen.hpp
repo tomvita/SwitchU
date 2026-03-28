@@ -11,6 +11,8 @@
 #include <vector>
 #include <functional>
 
+class OverlayDialog;
+
 namespace settings::tabs {
 class SystemTab;
 class AudioTab;
@@ -40,6 +42,19 @@ public:
 
     void update(float dt);
     void render(nxui::Renderer& ren);
+    void rebuildCurrentTab();
+    void handleTouch(nxui::Input& input);
+
+    struct DialogButtonDef {
+        std::string label;
+        std::function<void()> onPress;
+    };
+    using DialogRequestCb = std::function<void(const std::string& title,
+                                               const std::string& msg,
+                                               std::vector<DialogButtonDef> buttons)>;
+    void onDialogRequest(DialogRequestCb cb) { m_dialogRequestCb = std::move(cb); }
+    void requestDialog(const std::string& title, const std::string& msg,
+                       std::vector<DialogButtonDef> buttons);
 
     using ThemeToggleCb = std::function<void(bool dark)>;
     using BoolCb = std::function<void(bool)>;
@@ -121,6 +136,7 @@ public:
     struct Tab {
         std::string              name;
         std::vector<SettingItem> items;
+        std::function<void(Tab&, SettingsScreen&)> onUpdate;
     };
 
 private:
@@ -240,6 +256,7 @@ private:
     VoidCb  m_closeSfxCb;
     VoidCb  m_closedCb;
     VoidCb  m_netConnectCb;
+    DialogRequestCb m_dialogRequestCb;
     BoolCb  m_wireframeCb;
     BoolCb  m_toggleSfxCb;
     BoolCb  m_sliderSfxCb;
@@ -260,4 +277,10 @@ private:
     int m_i18nListenerId = -1;
     bool m_deferredRefresh = false;
     bool m_deferBuild = false;
+
+    // Touch tracking
+    enum class TouchTarget { None, Tab, Content, Dropdown, ColorPicker };
+    TouchTarget m_touchTarget = TouchTarget::None;
+    int   m_touchHitIndex = -1;
+    bool  m_touchOnSelected = false;
 };

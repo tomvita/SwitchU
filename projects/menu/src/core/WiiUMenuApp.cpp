@@ -3,6 +3,7 @@
 #include <nxui/core/Animation.hpp>
 #include <nxui/core/I18n.hpp>
 #include "DebugLog.hpp"
+#include "bluetooth/BluetoothManager.hpp"
 #include <switch.h>
 #if !defined(SWITCHU_HOMEBREW) && !defined(SWITCHU_MENU)
 #include <nxtc.h>
@@ -46,6 +47,9 @@ bool WiiUMenuApp::onCreate() {
         loadSoundPreset(m_config.soundPreset);
     });
     DebugLog::log("[init] Audio loading started on background thread");
+
+    bluetooth::Initialize();
+    DebugLog::log("[init] Bluetooth manager initialized");
 
     DebugLog::log("[init] Config loaded (theme=%s, musicVol=%.2f, sfxVol=%.2f)",
                   m_config.themePreset.c_str(), m_config.musicVolume, m_config.sfxVolume);
@@ -121,6 +125,8 @@ bool WiiUMenuApp::onCreate() {
 
 void WiiUMenuApp::onDestroy() {
     if (m_audioFuture.valid()) m_audioFuture.get();
+
+    bluetooth::Finalize();
 
 #ifndef SWITCHU_HOMEBREW
     switchu::menu::smi_cmd::menuClosing();
@@ -324,11 +330,11 @@ void WiiUMenuApp::buildGrid() {
     SidebarManager::Actions sidebarActions;
 #ifndef SWITCHU_HOMEBREW
     sidebarActions.onAlbum       = [this]() { m_launcher.launchAlbum(); };
-    sidebarActions.onEShop       = [this]() { m_launcher.launchEShop(); };
+    sidebarActions.onMiiEditor   = [this]() { m_launcher.launchMiiEditor(); };
     sidebarActions.onControllers = [this]() { m_launcher.launchControllerPairing(); };
 #else
     sidebarActions.onAlbum       = [this]() { m_audio.playSfx(Sfx::Activate); };
-    sidebarActions.onEShop       = [this]() { m_audio.playSfx(Sfx::Activate); };
+    sidebarActions.onMiiEditor   = [this]() { m_audio.playSfx(Sfx::Activate); };
     sidebarActions.onControllers = [this]() { m_audio.playSfx(Sfx::Activate); };
 #endif
     sidebarActions.onSettings = [this]() {
@@ -434,10 +440,11 @@ void WiiUMenuApp::buildGrid() {
     m_overlayLayer->setWireframeEnabled(false);
     m_overlayLayer->addChild(m_cursor);
     m_overlayLayer->addChild(m_userSelect);
-    m_overlayLayer->addChild(m_dialog);
-    m_overlayLayer->addChild(m_launchAnim);
 
     createSettings();
+
+    m_overlayLayer->addChild(m_dialog);
+    m_overlayLayer->addChild(m_launchAnim);
 
     root.addChild(m_bgLayer);
     root.addChild(m_contentLayer);
@@ -681,6 +688,30 @@ void WiiUMenuApp::createSettings() {
         m_pendingNetConnect = true;
         m_settings->hide();
     });
+    m_settings->onDialogRequest([this](const std::string& title,
+                                       const std::string& msg,
+                                       std::vector<SettingsScreen::DialogButtonDef> buttons) {
+        if (!m_dialog) return;
+        std::vector<OverlayDialog::ButtonDef> dlgButtons;
+        for (size_t i = 0; i < buttons.size(); ++i) {
+            auto cb = buttons[i].onPress;
+            bool isLast = (i == buttons.size() - 1);
+            if (isLast) {
+                // Cancel button — normal close behavior (plays ModalHide)
+                dlgButtons.push_back({buttons[i].label, [cb]() { if (cb) cb(); }, true});
+            } else {
+                // Action button — play positive confirmation sound
+                dlgButtons.push_back({buttons[i].label, [this, cb]() {
+                    m_audio.playSfx(Sfx::ConfirmPositive);
+                    m_dialog->hide();
+                    if (cb) cb();
+                }, false});
+            }
+        }
+        m_dialogReturnFocus = focusManager().current();
+        m_dialog->show(title, msg, std::move(dlgButtons));
+        focusManager().setFocus(m_dialog.get());
+    });
     m_settings->onClosed([this]() {
         m_threadPool.submit([cfg = m_config]() {
             cfg.save();
@@ -738,6 +769,7 @@ void WiiUMenuApp::wireFocusCallback() {
 
 bool WiiUMenuApp::isCurrentFocusableWidget(nxui::Widget* w) const {
     if (!w) return false;
+    if (m_settings && m_settings.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.leftButtons())
         if (btn.get() == w) return w->isFocusable();
     for (const auto& btn : m_sidebar.rightButtons())
@@ -931,7 +963,7 @@ void WiiUMenuApp::finalizeRefresh() {
 
     SidebarManager::Actions actions;
     actions.onAlbum       = [this]() { m_launcher.launchAlbum(); };
-    actions.onEShop       = [this]() { m_launcher.launchEShop(); };
+    actions.onMiiEditor   = [this]() { m_launcher.launchMiiEditor(); };
     actions.onControllers = [this]() { m_launcher.launchControllerPairing(); };
     actions.onSettings    = [this]() {
         m_audio.playSfx(Sfx::ModalShow);
@@ -1287,6 +1319,9 @@ void WiiUMenuApp::onUpdate(float dt) {
     bool dialogActiveNow = (m_dialog && m_dialog->isActive());
     if (dialogActiveNow)
         m_dialog->handleTouch(app().input());
+
+    if (m_settings && m_settings->isActive())
+        m_settings->handleTouch(app().input());
 
     if (m_dialogWasActive && !dialogActiveNow) {
         if (isCurrentFocusableWidget(m_dialogReturnFocus)) {

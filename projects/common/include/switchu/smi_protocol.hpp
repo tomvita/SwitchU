@@ -38,7 +38,7 @@ enum class SystemMessage : uint32_t {
     TerminateApplication  =  3,
 
     LaunchAlbum           = 10,
-    LaunchEShop           = 11,
+    LaunchMiiEditor       = 11,
     LaunchControllers     = 12,
     LaunchNetConnect      = 13,
 
