@@ -739,6 +739,8 @@ int main(int argc, char* argv[]) {
     switchu::FileLog::log("[daemon] main() entry");
 
     appletLoadAndApplyIdlePolicySettings();
+    appletBeginToWatchShortHomeButtonMessage();
+    appletSetHandlesRequestToDisplay(true);
 
     if (!nxtcInitialize())
         switchu::FileLog::log("[daemon] nxtc init failed (non-fatal)");

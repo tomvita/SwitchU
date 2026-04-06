@@ -6,6 +6,7 @@ toolchain("devkita64")
         local DEVKITPRO = os.getenv("DEVKITPRO") or "/opt/devkitpro"
         local DKA64    = path.join(DEVKITPRO, "devkitA64")
         local LIBNX    = path.join(DEVKITPRO, "libnx")
+        local PORTLIBS = path.join(DEVKITPRO, "portlibs", "switch")
         local bin      = path.join(DKA64, "bin")
         local pre      = "aarch64-none-elf-"
 
@@ -45,5 +46,9 @@ toolchain("devkita64")
         -- ── libnx (always needed for switch.specs / <switch.h>) ──
         toolchain:add("includedirs", path.join(LIBNX, "include"))
         toolchain:add("linkdirs", path.join(LIBNX, "lib"))
+
+        -- ── portlibs (zlib, libpng, freetype, etc.) ──
+        toolchain:add("includedirs", path.join(PORTLIBS, "include"))
+        toolchain:add("linkdirs", path.join(PORTLIBS, "lib"))
     end)
 toolchain_end()
