@@ -88,7 +88,12 @@ bool WiiUMenuApp::onCreate() {
     switchu::menu::ipc::connect();
     switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::HomeRequest,
         [this](const switchu::smi::MenuMessageContext&) {
-            m_sysMsg.pushAction(SysAction::HomeButton);
+            if (m_launcher.isAppRunning() && m_launcher.suspendedTitleId() != 0) {
+                DebugLog::log("[ipc] HomeRequest -> toggle: resuming suspended app");
+                m_launcher.resumeApplication();
+            } else {
+                m_sysMsg.pushAction(SysAction::HomeButton);
+            }
         });
     switchu::menu::ipc::onMessage(switchu::smi::MenuMessage::ApplicationExited,
         [this](const switchu::smi::MenuMessageContext&) {
@@ -1278,7 +1283,12 @@ void WiiUMenuApp::onUpdate(float dt) {
 
             switch (notif.msg) {
             case switchu::smi::MenuMessage::HomeRequest:
-                m_sysMsg.pushAction(SysAction::HomeButton);
+                if (m_launcher.isAppRunning() && m_launcher.suspendedTitleId() != 0) {
+                    DebugLog::log("[notify] HomeRequest -> toggle: resuming suspended app");
+                    m_launcher.resumeApplication();
+                } else {
+                    m_sysMsg.pushAction(SysAction::HomeButton);
+                }
                 break;
             case switchu::smi::MenuMessage::ApplicationExited:
                 m_launcher.setAppRunning(false);
