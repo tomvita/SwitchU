@@ -118,6 +118,15 @@ enum class PrivateServiceCmd : uint32_t {
     TryPopMessage  = 1,
 };
 static constexpr uint64_t kEShopProgramId = 0x010000000000100BULL;
+
+// Flag file written by Breeze to indicate it wants to be the Home-toggle target.
+// When present, pressing Home while a game is running launches Breeze (Album slot)
+// instead of the SwitchU menu. Breeze removes this file on "Exit" so Home reverts
+// to the SwitchU menu.
+static constexpr const char* kBreezeActiveFlag   = "sdmc:/config/SwitchU/breeze_active";
+// Flag file written by Breeze when "Goto Game" is pressed. Tells the daemon to
+// resume the suspended game instead of relaunching the menu after Breeze exits.
+static constexpr const char* kBreezeGotoGameFlag = "sdmc:/config/SwitchU/breeze_goto_game";
 static constexpr uint32_t kLdrAtmosRegisterExternalCode   = 65000;
 static constexpr uint32_t kLdrAtmosUnregisterExternalCode = 65001;
 

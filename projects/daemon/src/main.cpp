@@ -10,8 +10,10 @@
 #include "menu_launcher.hpp"
 #include "ipc_server.hpp"
 #include <cstring>
+#include <cstdio>
 #include <atomic>
 #include <vector>
+#include <unistd.h>
 
 using namespace switchu;
 
@@ -73,6 +75,9 @@ extern "C" void __appInit(void) {
     switchu::FileLog::open("daemon");
     switchu::FileLog::log("[daemon] __appInit complete (sd mount: 0x%X)", rc);
 
+    remove(smi::kBreezeActiveFlag);
+    remove(smi::kBreezeGotoGameFlag);
+
     svcOutputDebugString("[SwitchU-daemon] __appInit done", 31);
 }
 
@@ -131,6 +136,7 @@ static bool g_pendingMiiEditor = false;
 static bool g_pendingNetConnect = false;
 static bool g_foregroundAppletActive = false;
 static bool g_pendingForegroundAppletHome = false;
+static bool g_breezeAlbumActive = false;
 
 static smi::SystemStatus buildSystemStatus() {
     smi::SystemStatus st{};
@@ -206,6 +212,10 @@ static bool sendViewFlagsUpdates() {
     return false;
 }
 
+static Result launchLibraryApplet(AppletId id, const char* name,
+                                  const void* inData = nullptr, size_t inDataSize = 0,
+                                  u32 libAppletVersion = 0);
+
 static void handleGeneralChannel() {
     AppletStorage st;
     if (R_FAILED(appletPopFromGeneralChannel(&st))) return;
@@ -232,7 +242,33 @@ static void handleGeneralChannel() {
         if (daemon::app::isRunning() && daemon::app::hasForeground()) {
             daemon::app::onHomeSuspend();
             appletRequestToGetForeground();
-            if (daemon::menu_la::isActive()) {
+            if (access(smi::kBreezeActiveFlag, F_OK) == 0) {
+                if (g_breezeAlbumActive) {
+                    switchu::FileLog::log("[sams] Breeze already running, game suspended -> Breeze visible");
+                } else {
+                    switchu::FileLog::log("[sams] breeze_active flag set, launching Album (Breeze)");
+                    if (daemon::menu_la::isActive()) {
+                        switchu::FileLog::log("[sams] terminating menu for Breeze takeover");
+                        daemon::menu_la::terminate();
+                    }
+                    g_breezeAlbumActive = true;
+                    Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album(Breeze)");
+                    g_breezeAlbumActive = false;
+                    if (R_FAILED(rc))
+                        switchu::FileLog::log("[sams] Album(Breeze) launch FAIL: 0x%X", rc);
+                    if (access(smi::kBreezeGotoGameFlag, F_OK) == 0) {
+                        switchu::FileLog::log("[sams] breeze_goto_game flag set, resuming game");
+                        remove(smi::kBreezeGotoGameFlag);
+                        daemon::app::resume();
+                    } else if (access(smi::kBreezeActiveFlag, F_OK) == 0 && daemon::app::isRunning()) {
+                        switchu::FileLog::log("[sams] breeze_active still set, resuming game (Home toggle)");
+                        daemon::app::resume();
+                    } else {
+                        switchu::FileLog::log("[sams] breeze exited, relaunching menu");
+                        daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+                    }
+                }
+            } else if (daemon::menu_la::isActive()) {
                 pushNotification(smi::MenuMessage::ApplicationSuspended,
                                  daemon::app::suspendedTitleId());
                 if (daemon::menu_la::isSuspended())
@@ -271,7 +307,33 @@ static void handleAppletMessages() {
             appletRequestToGetForeground();
             if (daemon::app::isRunning() && daemon::app::hasForeground()) {
                 daemon::app::onHomeSuspend();
-                if (!daemon::menu_la::isActive()) {
+                if (access(smi::kBreezeActiveFlag, F_OK) == 0) {
+                    if (g_breezeAlbumActive) {
+                        switchu::FileLog::log("[ae] Breeze already running, game suspended -> Breeze visible");
+                    } else {
+                        switchu::FileLog::log("[ae] breeze_active flag set, launching Album (Breeze)");
+                        if (daemon::menu_la::isActive()) {
+                            switchu::FileLog::log("[ae] terminating menu for Breeze takeover");
+                            daemon::menu_la::terminate();
+                        }
+                        g_breezeAlbumActive = true;
+                        Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album(Breeze)");
+                        g_breezeAlbumActive = false;
+                        if (R_FAILED(rc))
+                            switchu::FileLog::log("[ae] Album(Breeze) launch FAIL: 0x%X", rc);
+                        if (access(smi::kBreezeGotoGameFlag, F_OK) == 0) {
+                            switchu::FileLog::log("[ae] breeze_goto_game flag set, resuming game");
+                            remove(smi::kBreezeGotoGameFlag);
+                            daemon::app::resume();
+                        } else if (access(smi::kBreezeActiveFlag, F_OK) == 0 && daemon::app::isRunning()) {
+                            switchu::FileLog::log("[ae] breeze_active still set, resuming game (Home toggle)");
+                            daemon::app::resume();
+                        } else {
+                            switchu::FileLog::log("[ae] breeze exited, relaunching menu");
+                            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+                        }
+                    }
+                } else if (!daemon::menu_la::isActive()) {
                     daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
                 } else {
                     pushNotification(smi::MenuMessage::ApplicationSuspended,
@@ -315,8 +377,8 @@ static void handleAppletMessages() {
 
 
 static Result launchLibraryApplet(AppletId id, const char* name,
-                                  const void* inData = nullptr, size_t inDataSize = 0,
-                                  u32 libAppletVersion = 0) {
+                                  const void* inData, size_t inDataSize,
+                                  u32 libAppletVersion) {
     switchu::FileLog::log("[applet] launching %s", name);
     AppletHolder holder;
     Result rc = appletCreateLibraryApplet(&holder, id, LibAppletMode_AllForeground);
@@ -370,7 +432,19 @@ static Result launchLibraryApplet(AppletId id, const char* name,
 
         if (g_pendingForegroundAppletHome) {
             g_pendingForegroundAppletHome = false;
-            switchu::FileLog::log("[applet] %s exiting on HOME request", name);
+            if (g_breezeAlbumActive
+                && access(smi::kBreezeActiveFlag, F_OK) == 0
+                && daemon::app::isRunning()) {
+                switchu::FileLog::log("[applet] %s Home -> resume game (Breeze persists)", name);
+                daemon::app::resume();
+            } else {
+                switchu::FileLog::log("[applet] %s exiting on HOME request", name);
+                appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
+            }
+        }
+
+        if (access(smi::kBreezeGotoGameFlag, F_OK) == 0) {
+            switchu::FileLog::log("[applet] %s breeze_goto_game detected, closing Album", name);
             appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
         }
 
@@ -582,8 +656,24 @@ static void mainLoop() {
             Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album");
             if (R_FAILED(rc))
                 switchu::FileLog::log("[main] pending album FAIL: 0x%X", rc);
-            switchu::FileLog::log("[main] relaunching menu after album");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            if (access(smi::kBreezeGotoGameFlag, F_OK) == 0) {
+                switchu::FileLog::log("[main] breeze_goto_game flag set, resuming game");
+                remove(smi::kBreezeGotoGameFlag);
+                if (daemon::app::isRunning()) {
+                    Result resumeRc = daemon::app::resume();
+                    if (R_FAILED(resumeRc))
+                        switchu::FileLog::log("[main] resume after Breeze FAIL: 0x%X", resumeRc);
+                } else {
+                    switchu::FileLog::log("[main] no app running, relaunching menu instead");
+                    daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+                }
+            } else if (access(smi::kBreezeActiveFlag, F_OK) == 0 && daemon::app::isRunning()) {
+                switchu::FileLog::log("[main] breeze_active still set, resuming game (Home toggle)");
+                daemon::app::resume();
+            } else {
+                switchu::FileLog::log("[main] relaunching menu after album");
+                daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            }
         } else if (g_pendingNetConnect) {
             g_pendingNetConnect = false;
             switchu::FileLog::log("[main] executing pending NetConnect launch");
