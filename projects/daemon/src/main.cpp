@@ -215,6 +215,7 @@ static bool sendViewFlagsUpdates() {
 static Result launchLibraryApplet(AppletId id, const char* name,
                                   const void* inData = nullptr, size_t inDataSize = 0,
                                   u32 libAppletVersion = 0);
+static void handleMenuCommand();
 
 static void handleGeneralChannel() {
     AppletStorage st;
@@ -273,6 +274,9 @@ static void handleGeneralChannel() {
                                  daemon::app::suspendedTitleId());
                 if (daemon::menu_la::isSuspended())
                     pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
+            } else if (g_foregroundAppletActive) {
+                switchu::FileLog::log("[sams] game suspended, closing foreground applet to show menu");
+                g_pendingForegroundAppletHome = true;
             } else {
                 daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
             }
@@ -304,6 +308,10 @@ static void handleAppletMessages() {
         switchu::FileLog::log("[ae] msg=%u", msg);
         switch (msg) {
             case 20:
+            switchu::FileLog::log("[ae] msg20 state: appRunning=%d hasFG=%d menuActive=%d menuSuspended=%d breezeAlbum=%d fgApplet=%d",
+                daemon::app::isRunning(), daemon::app::hasForeground(),
+                daemon::menu_la::isActive(), daemon::menu_la::isSuspended(),
+                g_breezeAlbumActive, g_foregroundAppletActive);
             appletRequestToGetForeground();
             if (daemon::app::isRunning() && daemon::app::hasForeground()) {
                 daemon::app::onHomeSuspend();
@@ -333,6 +341,9 @@ static void handleAppletMessages() {
                             daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
                         }
                     }
+                } else if (g_foregroundAppletActive) {
+                    switchu::FileLog::log("[ae] game suspended, closing foreground applet to show menu");
+                    g_pendingForegroundAppletHome = true;
                 } else if (!daemon::menu_la::isActive()) {
                     daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
                 } else {
@@ -354,6 +365,13 @@ static void handleAppletMessages() {
             switchu::FileLog::log("[ae] -> Sleep (msg=%u)", msg);
             appletStartSleepSequence(true);
             break;
+            case 50: {
+                switchu::FileLog::log("[ae] -> LaunchApplicationRequested (msg 50)");
+                Result launchRc = daemon::app::launchRequested();
+                if (R_FAILED(launchRc))
+                    switchu::FileLog::log("[ae] launchRequested FAIL: 0x%X", launchRc);
+                break;
+            }
             case 26:
             switchu::FileLog::log("[ae] -> Wakeup");
             if (daemon::app::isRunning() && !daemon::menu_la::isActive()) {
@@ -429,6 +447,7 @@ static Result launchLibraryApplet(AppletId id, const char* name,
     while (appletHolderActive(&holder) && !appletHolderCheckFinished(&holder)) {
         handleGeneralChannel();
         handleAppletMessages();
+        handleMenuCommand();
 
         if (g_pendingForegroundAppletHome) {
             g_pendingForegroundAppletHome = false;

@@ -195,6 +195,84 @@ inline bool checkFinished() {
     return false;
 }
 
+inline Result launchRequested() {
+    if (g_running) {
+        switchu::FileLog::log("[app] closing previous app before external launch");
+        appletApplicationRequestExit(&g_app);
+        appletApplicationJoin(&g_app);
+        appletApplicationClose(&g_app);
+        g_running = false;
+        g_hasForeground = false;
+        g_suspendedTitleId = 0;
+    }
+
+    AccountUid uid = {};
+    Result selRc = accountTrySelectUserWithoutInteraction(&uid, false);
+    if (R_FAILED(selRc) || !accountUidIsValid(&uid)) {
+        AccountUid userList[8] = {};
+        s32 userCount = 0;
+        accountListAllUsers(userList, 8, &userCount);
+        if (userCount > 0 && accountUidIsValid(&userList[0]))
+            uid = userList[0];
+    }
+
+    Result rc = appletPopLaunchRequestedApplication(&g_app);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[app] PopLaunchRequestedApp FAIL: 0x%X", rc);
+        return rc;
+    }
+
+    uint64_t title_id = 0;
+    appletApplicationGetApplicationId(&g_app, &title_id);
+    switchu::FileLog::log("[app] ext popped 0x%016lX", title_id);
+
+    ensureApplicationSaveData(title_id, uid);
+
+    struct {
+        u32 magic;
+        u8  is_selected;
+        u8  pad[3];
+        AccountUid uid;
+        u8  unused[0x70];
+    } userArg = {};
+    static_assert(sizeof(userArg) == 0x88);
+
+    userArg.magic       = 0xC79497CA;
+    userArg.is_selected = 1;
+    userArg.uid         = uid;
+
+    AppletStorage st;
+    rc = appletCreateStorage(&st, sizeof(userArg));
+    if (R_SUCCEEDED(rc)) {
+        appletStorageWrite(&st, 0, &userArg, sizeof(userArg));
+        rc = appletApplicationPushLaunchParameter(&g_app,
+            AppletLaunchParameterKind_PreselectedUser, &st);
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[app] ext PushUser FAIL: 0x%X", rc);
+            appletStorageClose(&st);
+        }
+    }
+
+    appletUnlockForeground();
+
+    rc = appletApplicationStart(&g_app);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[app] ext Start FAIL: 0x%X", rc);
+        appletApplicationClose(&g_app);
+        return rc;
+    }
+
+    rc = appletApplicationRequestForApplicationToGetForeground(&g_app);
+    if (R_FAILED(rc))
+        switchu::FileLog::log("[app] ext ReqFG FAIL: 0x%X (non-fatal)", rc);
+
+    g_running = true;
+    g_hasForeground = true;
+    g_suspendedTitleId = title_id;
+    switchu::FileLog::log("[app] ext launched 0x%016lX", title_id);
+    return 0;
+}
+
 inline void onHomeSuspend() {
     g_hasForeground = false;
 }

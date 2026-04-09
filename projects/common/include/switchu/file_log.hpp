@@ -14,23 +14,21 @@ public:
     static void open(const char* tag) {
         ::mkdir("sdmc:/config", 0755);
         ::mkdir(LOG_DIR, 0755);
-        char path[128];
-        std::snprintf(path, sizeof(path), "%s/%s.log", LOG_DIR, tag);
         auto& self = inst();
-        self.m_file = std::fopen(path, "w");
-        if (self.m_file) {
-            std::setvbuf(self.m_file, nullptr, _IOLBF, 0);
-            std::fprintf(self.m_file, "=== %s log start ===\n", tag);
-            std::fflush(self.m_file);
+        std::snprintf(self.m_path, sizeof(self.m_path), "%s/%s.log", LOG_DIR, tag);
+        FILE* f = std::fopen(self.m_path, "a");
+        if (f) {
+            std::fprintf(f, "\n=== %s log start ===\n", tag);
+            std::fclose(f);
         }
     }
 
     static void close() {
         auto& self = inst();
-        if (self.m_file) {
-            std::fprintf(self.m_file, "=== log end ===\n");
-            std::fclose(self.m_file);
-            self.m_file = nullptr;
+        FILE* f = std::fopen(self.m_path, "a");
+        if (f) {
+            std::fprintf(f, "=== log end ===\n");
+            std::fclose(f);
         }
     }
 
@@ -48,15 +46,16 @@ public:
 
         std::fprintf(stderr, "[%u.%03u] %s\n", secs, frac, buf);
         auto& self = inst();
-        if (self.m_file) {
-            std::fprintf(self.m_file, "[%u.%03u] %s\n", secs, frac, buf);
-            std::fflush(self.m_file);
+        FILE* f = std::fopen(self.m_path, "a");
+        if (f) {
+            std::fprintf(f, "[%u.%03u] %s\n", secs, frac, buf);
+            std::fclose(f);
         }
     }
 
 private:
     static FileLog& inst() { static FileLog s; return s; }
-    FILE* m_file = nullptr;
+    char m_path[128] = {};
 };
 
 }
