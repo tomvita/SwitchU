@@ -137,6 +137,7 @@ static bool g_pendingNetConnect = false;
 static bool g_foregroundAppletActive = false;
 static bool g_pendingForegroundAppletHome = false;
 static bool g_breezeAlbumActive = false;
+static bool g_smiMenuReady = false;
 
 static smi::SystemStatus buildSystemStatus() {
     smi::SystemStatus st{};
@@ -251,6 +252,7 @@ static void handleGeneralChannel() {
                     if (daemon::menu_la::isActive()) {
                         switchu::FileLog::log("[sams] terminating menu for Breeze takeover");
                         daemon::menu_la::terminate();
+                        g_smiMenuReady = false;
                     }
                     g_breezeAlbumActive = true;
                     Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album(Breeze)");
@@ -270,10 +272,16 @@ static void handleGeneralChannel() {
                     }
                 }
             } else if (daemon::menu_la::isActive()) {
-                pushNotification(smi::MenuMessage::ApplicationSuspended,
-                                 daemon::app::suspendedTitleId());
-                if (daemon::menu_la::isSuspended())
-                    pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
+                if (g_smiMenuReady) {
+                    pushNotification(smi::MenuMessage::ApplicationSuspended,
+                                     daemon::app::suspendedTitleId());
+                    if (daemon::menu_la::isSuspended())
+                        pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
+                } else {
+                    switchu::FileLog::log("[sams] non-SMI menu: waking for game suspend");
+                    if (daemon::menu_la::isSuspended())
+                        pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
+                }
             } else if (g_foregroundAppletActive) {
                 switchu::FileLog::log("[sams] game suspended, closing foreground applet to show menu");
                 g_pendingForegroundAppletHome = true;
@@ -281,7 +289,13 @@ static void handleGeneralChannel() {
                 daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
             }
         } else if (daemon::menu_la::isActive()) {
-            pushNotification(smi::MenuMessage::HomeRequest);
+            if (g_smiMenuReady) {
+                pushNotification(smi::MenuMessage::HomeRequest);
+            } else if (daemon::app::isRunning()) {
+                switchu::FileLog::log("[sams] non-SMI menu: daemon-side resume");
+                daemon::menu_la::setSuspended(true);
+                daemon::app::resume();
+            }
         } else if (g_foregroundAppletActive) {
             switchu::FileLog::log("[sams] -> Home requested while foreground applet active");
             g_pendingForegroundAppletHome = true;
@@ -323,6 +337,7 @@ static void handleAppletMessages() {
                         if (daemon::menu_la::isActive()) {
                             switchu::FileLog::log("[ae] terminating menu for Breeze takeover");
                             daemon::menu_la::terminate();
+                            g_smiMenuReady = false;
                         }
                         g_breezeAlbumActive = true;
                         Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album(Breeze)");
@@ -347,13 +362,25 @@ static void handleAppletMessages() {
                 } else if (!daemon::menu_la::isActive()) {
                     daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
                 } else {
-                    pushNotification(smi::MenuMessage::ApplicationSuspended,
-                                     daemon::app::suspendedTitleId());
-                    if (daemon::menu_la::isSuspended())
-                        pushWakeSignal("ae", 0, daemon::app::suspendedTitleId());
+                    if (g_smiMenuReady) {
+                        pushNotification(smi::MenuMessage::ApplicationSuspended,
+                                         daemon::app::suspendedTitleId());
+                        if (daemon::menu_la::isSuspended())
+                            pushWakeSignal("ae", 0, daemon::app::suspendedTitleId());
+                    } else {
+                        switchu::FileLog::log("[ae] non-SMI menu: waking for game suspend");
+                        if (daemon::menu_la::isSuspended())
+                            pushWakeSignal("ae", 0, daemon::app::suspendedTitleId());
+                    }
                 }
             } else if (daemon::menu_la::isActive()) {
-                pushNotification(smi::MenuMessage::HomeRequest);
+                if (g_smiMenuReady) {
+                    pushNotification(smi::MenuMessage::HomeRequest);
+                } else if (daemon::app::isRunning()) {
+                    switchu::FileLog::log("[ae] non-SMI menu: daemon-side resume");
+                    daemon::menu_la::setSuspended(true);
+                    daemon::app::resume();
+                }
             } else if (g_foregroundAppletActive) {
                 switchu::FileLog::log("[ae] -> Home requested while foreground applet active");
                 g_pendingForegroundAppletHome = true;
@@ -370,6 +397,8 @@ static void handleAppletMessages() {
                 Result launchRc = daemon::app::launchRequested();
                 if (R_FAILED(launchRc))
                     switchu::FileLog::log("[ae] launchRequested FAIL: 0x%X", launchRc);
+                else
+                    daemon::menu_la::setSuspended(true);
                 break;
             }
             case 26:
@@ -588,6 +617,7 @@ static void handleMenuCommand() {
 
     case smi::SystemMessage::MenuReady:
         switchu::FileLog::log("[smi] menu ready");
+        g_smiMenuReady = true;
         break;
 
     case smi::SystemMessage::MenuClosing:
@@ -666,6 +696,7 @@ static void mainLoop() {
     }
 
     if (daemon::menu_la::checkFinished()) {
+        g_smiMenuReady = false;
         switchu::FileLog::log("[main] menu exited (reason=%d)",
             (int)daemon::menu_la::exitReason());
 
