@@ -5,6 +5,7 @@
 #include <switch.h>
 #include <cstdio>
 #include <cstring>
+#include <unistd.h>
 
 namespace switchu::daemon::menu_la {
 
@@ -25,8 +26,18 @@ inline void setSuspended(bool v) {
 }
 
 inline Result create() {
+    AppletId appletId = AppletId_LibraryAppletPhotoViewer;  // default: Album (hbmenu)
+    if (access(smi::kLaunchProfileFlag, F_OK) == 0) {
+        appletId = AppletId_LibraryAppletMyPage;
+        switchu::FileLog::log("[menu_la] launch_profile flag present, using MyPage applet");
+    } else if (access(smi::kLaunchEshopFlag, F_OK) == 0) {
+        appletId = AppletId_LibraryAppletShop;
+        switchu::FileLog::log("[menu_la] launch_eshop flag present, using eShop applet");
+    } else {
+        switchu::FileLog::log("[menu_la] no flag, defaulting to Album applet");
+    }
     Result rc = appletCreateLibraryApplet(&g_holder,
-        AppletId_LibraryAppletShop, LibAppletMode_AllForeground);
+        appletId, LibAppletMode_AllForeground);
     if (R_FAILED(rc)) {
         switchu::FileLog::log("[menu_la] CreateLibApplet FAIL: 0x%X", rc);
         return rc;

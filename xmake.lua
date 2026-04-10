@@ -28,6 +28,12 @@ option("backend")
     set_values("deko3d", "sdl2")
 option_end()
 
+option("nro_launcher")
+    set_default(false)
+    set_showmenu(true)
+    set_description("Enable NRO launcher IPC path in the daemon (cmd 2)")
+option_end()
+
 -- ── Static library: nxui ─────────────────────────────────────────────────────
 target("nxui")
     set_kind("static")
@@ -147,6 +153,34 @@ target("SwitchU")
     set_values("switch.format",  "nro")
 target_end()
 
+-- ── SwitchU NRO Launcher (minimal: IPC to daemon, no UI) ─────────────────────
+target("switchu-launcher")
+    set_kind("binary")
+    if not is_plat("cross") then return end
+    if not has_config("homebrew") then
+        set_default(false)
+    end
+
+    set_toolchains("devkita64")
+    set_languages("c++20")
+    add_rules("switch")
+
+    add_files("projects/launcher/main.cpp")
+
+    add_cxxflags("-fno-rtti", "-fno-exceptions", {force = true})
+    add_syslinks("nx")
+
+    if is_mode("release") then
+        add_cxflags("-Os", "-flto=auto", {force = true})
+        add_ldflags("-flto=auto", {force = true})
+    end
+
+    set_values("switch.name",    "SwitchU")
+    set_values("switch.author",  "PoloNX")
+    set_values("switch.version", "1.0.1")
+    set_values("switch.format",  "nro")
+target_end()
+
 -- ══════════════════════════════════════════════════════════════════════════════
 -- Two-applet mode (non-homebrew):  daemon  +  menu
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -171,6 +205,10 @@ target("switchu-daemon")
     add_cxxflags("-fno-rtti", "-fexceptions", {force = true})
     add_packages("zlib")
     add_syslinks("nx")
+
+    if has_config("nro_launcher") then
+        add_defines("ENABLE_NRO_LAUNCHER")
+    end
 
     if is_mode("release") then
         add_cxflags("-O3", "-flto=auto", "-ffast-math", {force = true})

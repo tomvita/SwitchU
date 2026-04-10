@@ -36,6 +36,10 @@ inline bool popMessage(smi::MenuMessageContext& out) {
     return true;
 }
 
+#ifdef ENABLE_NRO_LAUNCHER
+static std::atomic<bool> g_launchMenuRequested{false};
+#endif
+
 static Handle g_serverHandle = INVALID_HANDLE;
 static Handle g_sessionHandle = INVALID_HANDLE;
 static Thread g_serverThread = {};
@@ -98,6 +102,21 @@ static void handleIpcRequest() {
         }
         break;
     }
+#ifdef ENABLE_NRO_LAUNCHER
+    case 2: {
+        g_launchMenuRequested.store(true);
+        switchu::FileLog::log("[ipc] LaunchMenu requested");
+        HipcRequest resp = hipcMakeRequest(tls, HipcMetadata{
+            .type = CmifCommandType_Request,
+            .num_data_words = 4,
+        });
+        resp.data_words[0] = 0x4F434653;
+        resp.data_words[1] = 0;
+        resp.data_words[2] = 0;
+        resp.data_words[3] = 0;
+        break;
+    }
+#endif
     default: {
         HipcRequest resp = hipcMakeRequest(tls, HipcMetadata{
             .type = CmifCommandType_Request,

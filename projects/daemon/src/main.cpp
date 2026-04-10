@@ -268,33 +268,36 @@ static void handleGeneralChannel() {
                         daemon::app::resume();
                     } else {
                         switchu::FileLog::log("[sams] breeze exited, relaunching menu");
-                        daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+                        daemon::menu_la::launch(
+                            daemon::app::isRunning() ? smi::MenuStartMode::Resume
+                                                     : smi::MenuStartMode::MainMenu,
+                            buildSystemStatus());
                     }
                 }
-            } else if (daemon::menu_la::isActive()) {
-                if (g_smiMenuReady) {
-                    pushNotification(smi::MenuMessage::ApplicationSuspended,
-                                     daemon::app::suspendedTitleId());
-                    if (daemon::menu_la::isSuspended())
-                        pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
-                } else {
-                    switchu::FileLog::log("[sams] non-SMI menu: waking for game suspend");
-                    if (daemon::menu_la::isSuspended())
-                        pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
-                }
             } else if (g_foregroundAppletActive) {
-                switchu::FileLog::log("[sams] game suspended, closing foreground applet to show menu");
+                switchu::FileLog::log("[sams] game suspended, closing foreground applet for menu restart");
                 g_pendingForegroundAppletHome = true;
             } else {
+                if (daemon::menu_la::isActive()) {
+                    switchu::FileLog::log("[sams] terminating menu for Home restart");
+                    daemon::menu_la::terminate();
+                    g_smiMenuReady = false;
+                }
                 daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
             }
         } else if (daemon::menu_la::isActive()) {
             if (g_smiMenuReady) {
                 pushNotification(smi::MenuMessage::HomeRequest);
             } else if (daemon::app::isRunning()) {
-                switchu::FileLog::log("[sams] non-SMI menu: daemon-side resume");
-                daemon::menu_la::setSuspended(true);
+                switchu::FileLog::log("[sams] non-SMI menu Home: game running, terminating menu and resuming game");
+                daemon::menu_la::terminate();
+                g_smiMenuReady = false;
                 daemon::app::resume();
+            } else {
+                switchu::FileLog::log("[sams] non-SMI menu Home: restarting menu");
+                daemon::menu_la::terminate();
+                g_smiMenuReady = false;
+                daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
             }
         } else if (g_foregroundAppletActive) {
             switchu::FileLog::log("[sams] -> Home requested while foreground applet active");
@@ -352,34 +355,37 @@ static void handleAppletMessages() {
                             switchu::FileLog::log("[ae] breeze_active still set, resuming game (Home toggle)");
                             daemon::app::resume();
                         } else {
-                            switchu::FileLog::log("[ae] breeze exited, relaunching menu");
-                            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+                        switchu::FileLog::log("[ae] breeze exited, relaunching menu");
+                        daemon::menu_la::launch(
+                            daemon::app::isRunning() ? smi::MenuStartMode::Resume
+                                                     : smi::MenuStartMode::MainMenu,
+                            buildSystemStatus());
                         }
                     }
                 } else if (g_foregroundAppletActive) {
-                    switchu::FileLog::log("[ae] game suspended, closing foreground applet to show menu");
+                    switchu::FileLog::log("[ae] game suspended, closing foreground applet for menu restart");
                     g_pendingForegroundAppletHome = true;
-                } else if (!daemon::menu_la::isActive()) {
-                    daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
                 } else {
-                    if (g_smiMenuReady) {
-                        pushNotification(smi::MenuMessage::ApplicationSuspended,
-                                         daemon::app::suspendedTitleId());
-                        if (daemon::menu_la::isSuspended())
-                            pushWakeSignal("ae", 0, daemon::app::suspendedTitleId());
-                    } else {
-                        switchu::FileLog::log("[ae] non-SMI menu: waking for game suspend");
-                        if (daemon::menu_la::isSuspended())
-                            pushWakeSignal("ae", 0, daemon::app::suspendedTitleId());
+                    if (daemon::menu_la::isActive()) {
+                        switchu::FileLog::log("[ae] terminating menu for Home restart");
+                        daemon::menu_la::terminate();
+                        g_smiMenuReady = false;
                     }
+                    daemon::menu_la::launch(smi::MenuStartMode::Resume, buildSystemStatus());
                 }
             } else if (daemon::menu_la::isActive()) {
                 if (g_smiMenuReady) {
                     pushNotification(smi::MenuMessage::HomeRequest);
                 } else if (daemon::app::isRunning()) {
-                    switchu::FileLog::log("[ae] non-SMI menu: daemon-side resume");
-                    daemon::menu_la::setSuspended(true);
+                    switchu::FileLog::log("[ae] non-SMI menu Home: game running, terminating menu and resuming game");
+                    daemon::menu_la::terminate();
+                    g_smiMenuReady = false;
                     daemon::app::resume();
+                } else {
+                    switchu::FileLog::log("[ae] non-SMI menu Home: restarting menu");
+                    daemon::menu_la::terminate();
+                    g_smiMenuReady = false;
+                    daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
                 }
             } else if (g_foregroundAppletActive) {
                 switchu::FileLog::log("[ae] -> Home requested while foreground applet active");
@@ -495,6 +501,13 @@ static Result launchLibraryApplet(AppletId id, const char* name,
             switchu::FileLog::log("[applet] %s breeze_goto_game detected, closing Album", name);
             appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
         }
+
+#ifdef ENABLE_NRO_LAUNCHER
+        if (daemon::ipc::g_launchMenuRequested.load()) {
+            switchu::FileLog::log("[applet] %s closing for LaunchMenu IPC request", name);
+            appletHolderRequestExitOrTerminate(&holder, 5'000'000'000ULL);
+        }
+#endif
 
         svcSleepThread(10'000'000ULL);
     }
@@ -666,6 +679,23 @@ static void mainLoop() {
     handleAppletMessages();
     handleMenuCommand();
 
+#ifdef ENABLE_NRO_LAUNCHER
+    if (daemon::ipc::g_launchMenuRequested.exchange(false)) {
+        switchu::FileLog::log("[main] LaunchMenu IPC received");
+        // Remove launch_eshop/launch_profile flags so the menu launches
+        // as Album (default), not the SwitchU menu.
+        remove(smi::kLaunchEshopFlag);
+        remove(smi::kLaunchProfileFlag);
+        if (daemon::menu_la::isActive()) {
+            switchu::FileLog::log("[main] terminating current menu for LaunchMenu IPC");
+            daemon::menu_la::terminate();
+            g_smiMenuReady = false;
+        }
+        switchu::FileLog::log("[main] launching SwitchU menu via IPC request");
+        daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+    }
+#endif
+
     if (g_eventRefreshPending.exchange(false)) {
         if (!g_initialEventSkipped) {
             g_initialEventSkipped = true;
@@ -695,7 +725,7 @@ static void mainLoop() {
         }
     }
 
-    if (daemon::menu_la::checkFinished()) {
+    if (daemon::menu_la::isActive() && daemon::menu_la::checkFinished()) {
         g_smiMenuReady = false;
         switchu::FileLog::log("[main] menu exited (reason=%d)",
             (int)daemon::menu_la::exitReason());
@@ -706,24 +736,11 @@ static void mainLoop() {
             Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer, "Album");
             if (R_FAILED(rc))
                 switchu::FileLog::log("[main] pending album FAIL: 0x%X", rc);
-            if (access(smi::kBreezeGotoGameFlag, F_OK) == 0) {
-                switchu::FileLog::log("[main] breeze_goto_game flag set, resuming game");
-                remove(smi::kBreezeGotoGameFlag);
-                if (daemon::app::isRunning()) {
-                    Result resumeRc = daemon::app::resume();
-                    if (R_FAILED(resumeRc))
-                        switchu::FileLog::log("[main] resume after Breeze FAIL: 0x%X", resumeRc);
-                } else {
-                    switchu::FileLog::log("[main] no app running, relaunching menu instead");
-                    daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
-                }
-            } else if (access(smi::kBreezeActiveFlag, F_OK) == 0 && daemon::app::isRunning()) {
-                switchu::FileLog::log("[main] breeze_active still set, resuming game (Home toggle)");
-                daemon::app::resume();
-            } else {
-                switchu::FileLog::log("[main] relaunching menu after album");
-                daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
-            }
+            switchu::FileLog::log("[main] relaunching menu after album");
+            daemon::menu_la::launch(
+                daemon::app::isRunning() ? smi::MenuStartMode::Resume
+                                         : smi::MenuStartMode::MainMenu,
+                buildSystemStatus());
         } else if (g_pendingNetConnect) {
             g_pendingNetConnect = false;
             switchu::FileLog::log("[main] executing pending NetConnect launch");
@@ -735,7 +752,10 @@ static void mainLoop() {
                 switchu::FileLog::log("[main] NetConnect create FAIL: 0x%X", rc);
             }
             switchu::FileLog::log("[main] relaunching menu after NetConnect");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            daemon::menu_la::launch(
+                daemon::app::isRunning() ? smi::MenuStartMode::Resume
+                                         : smi::MenuStartMode::MainMenu,
+                buildSystemStatus());
         } else if (g_pendingMiiEditor) {
             g_pendingMiiEditor = false;
             switchu::FileLog::log("[main] executing pending Mii Editor launch");
@@ -750,7 +770,10 @@ static void mainLoop() {
             if (R_FAILED(rc))
                 switchu::FileLog::log("[main] pending Mii Editor FAIL: 0x%X", rc);
             switchu::FileLog::log("[main] relaunching menu after Mii Editor");
-            daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+            daemon::menu_la::launch(
+                daemon::app::isRunning() ? smi::MenuStartMode::Resume
+                                         : smi::MenuStartMode::MainMenu,
+                buildSystemStatus());
         } else if (g_pendingLaunch) {
             g_pendingLaunch = false;
             g_pendingResume = false;
@@ -767,6 +790,11 @@ static void mainLoop() {
         } else if (!daemon::app::isRunning()) {
             switchu::FileLog::log("[main] relaunching menu");
             daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+        } else {
+            switchu::FileLog::log("[main] menu exited with no pending action, game running -> resuming game");
+            Result rc = daemon::app::resume();
+            if (R_FAILED(rc))
+                switchu::FileLog::log("[main] resume FAIL: 0x%X", rc);
         }
     }
 

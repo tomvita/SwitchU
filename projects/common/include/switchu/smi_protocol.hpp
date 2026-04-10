@@ -116,6 +116,7 @@ struct DaemonNotification {
 enum class PrivateServiceCmd : uint32_t {
     Initialize     = 0,
     TryPopMessage  = 1,
+    LaunchMenu     = 2,
 };
 static constexpr uint64_t kEShopProgramId = 0x010000000000100BULL;
 
@@ -127,6 +128,11 @@ static constexpr const char* kBreezeActiveFlag   = "sdmc:/config/SwitchU/breeze_
 // Flag file written by Breeze when "Goto Game" is pressed. Tells the daemon to
 // resume the suspended game instead of relaunching the menu after Breeze exits.
 static constexpr const char* kBreezeGotoGameFlag = "sdmc:/config/SwitchU/breeze_goto_game";
+// Menu applet selection — determined by flag files.
+// Priority: launch_profile > launch_eshop > Album (default).
+// When no flag is present the daemon launches Album (hbmenu).
+static constexpr const char* kLaunchProfileFlag  = "sdmc:/config/SwitchU/launch_profile";
+static constexpr const char* kLaunchEshopFlag    = "sdmc:/config/SwitchU/launch_eshop";
 static constexpr uint32_t kLdrAtmosRegisterExternalCode   = 65000;
 static constexpr uint32_t kLdrAtmosUnregisterExternalCode = 65001;
 
