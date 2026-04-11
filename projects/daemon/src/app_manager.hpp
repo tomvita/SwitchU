@@ -15,6 +15,18 @@ inline bool isRunning() { return g_running; }
 inline bool hasForeground() { return g_hasForeground; }
 inline uint64_t suspendedTitleId() { return g_suspendedTitleId; }
 
+static constexpr uint64_t kExitTimeoutNs = 5'000'000'000ULL; // 5 seconds
+
+/// Request graceful exit; force-terminate if the app doesn't exit within the timeout.
+static inline void requestExitWithTimeout(AppletApplication* app, uint64_t timeout_ns = kExitTimeoutNs) {
+    appletApplicationRequestExit(app);
+    Result rc = eventWait(&app->StateChangedEvent, timeout_ns);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[app] exit timeout (%llu ns), force-terminating", timeout_ns);
+        appletApplicationTerminate(app);
+    }
+}
+
 static inline void ensureSaveData(uint64_t app_id, uint64_t owner_id,
                                   AccountUid user_id, FsSaveDataType type,
                                   FsSaveDataSpaceId space_id,
@@ -100,7 +112,7 @@ static inline void ensureApplicationSaveData(uint64_t title_id, AccountUid uid) 
 inline Result launch(uint64_t title_id, AccountUid uid) {
     if (g_running) {
         switchu::FileLog::log("[app] closing previous app before launch");
-        appletApplicationRequestExit(&g_app);
+        requestExitWithTimeout(&g_app);
         appletApplicationJoin(&g_app);
         appletApplicationClose(&g_app);
         g_running = false;
@@ -171,7 +183,7 @@ inline Result resume() {
 
 inline Result terminate() {
     if (!g_running) return 0;
-    appletApplicationRequestExit(&g_app);
+    requestExitWithTimeout(&g_app);
     appletApplicationJoin(&g_app);
     appletApplicationClose(&g_app);
     g_running = false;
@@ -198,7 +210,7 @@ inline bool checkFinished() {
 inline Result launchRequested() {
     if (g_running) {
         switchu::FileLog::log("[app] closing previous app before external launch");
-        appletApplicationRequestExit(&g_app);
+        requestExitWithTimeout(&g_app);
         appletApplicationJoin(&g_app);
         appletApplicationClose(&g_app);
         g_running = false;
@@ -279,7 +291,7 @@ inline void onHomeSuspend() {
 
 inline void cleanup() {
     if (g_running) {
-        appletApplicationRequestExit(&g_app);
+        requestExitWithTimeout(&g_app);
         appletApplicationJoin(&g_app);
         appletApplicationClose(&g_app);
         g_running = false;
