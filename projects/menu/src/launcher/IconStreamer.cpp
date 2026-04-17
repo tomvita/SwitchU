@@ -161,7 +161,9 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
 
     // Pre-reserve pool capacity so emplace_back() never reallocates.
     // Reallocation would invalidate texture pointers already handed out
-    // to GlossyIcon widgets earlier in this loop.
+    // to GlossyIcon widgets earlier in this loop — but also pointers
+    // from *previous* onPageChanged() calls for icons that survived
+    // eviction.  After a reallocation we must re-wire every loaded icon.
     {
         int newSlots = 0;
         int freeAvail = (int)m_freeSlots.size();
@@ -170,7 +172,19 @@ void IconStreamer::onPageChanged(int currentPage, int iconsPerPage,
             if (freeAvail > 0) --freeAvail;
             else ++newSlots;
         }
-        m_pool.reserve(m_pool.size() + newSlots);
+        if (newSlots > 0) {
+            auto* oldData = m_pool.data();
+            m_pool.reserve(m_pool.size() + newSlots);
+            if (m_pool.data() != oldData) {
+                // Pool was moved to a new allocation – re-wire every
+                // surviving icon so their Texture* pointers stay valid.
+                for (int i = 0; i < (int)m_pool.size(); ++i) {
+                    int app = m_pool[i].appIndex;
+                    if (app >= 0 && app < (int)allIcons.size())
+                        allIcons[app]->setTexture(&m_pool[i].texture);
+                }
+            }
+        }
     }
 
     for (auto& d : decoded) {
