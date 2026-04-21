@@ -129,9 +129,13 @@ static constexpr const char* kBreezeActiveFlag   = "sdmc:/config/SwitchU/breeze_
 // resume the suspended game instead of relaunching the menu after Breeze exits.
 static constexpr const char* kBreezeGotoGameFlag = "sdmc:/config/SwitchU/breeze_goto_game";
 // Menu applet selection — determined by flag files.
-// Priority: launch_profile > launch_eshop > Album (default).
+// Priority: launch_profile > launch_cabinet > launch_eshop > Album (default).
 // When no flag is present the daemon launches Album (hbmenu).
+// NOTE: launch_eshop (LibraryAppletShop, 0x010000000000100B) is broken on
+// HOS 22.1+. Users on HOS 22+ should use launch_cabinet instead, which takes
+// over the amiibo Cabinet slot (0x0100000000001002) and is confirmed working.
 static constexpr const char* kLaunchProfileFlag  = "sdmc:/config/SwitchU/launch_profile";
+static constexpr const char* kLaunchCabinetFlag  = "sdmc:/config/SwitchU/launch_cabinet";
 static constexpr const char* kLaunchEshopFlag    = "sdmc:/config/SwitchU/launch_eshop";
 static constexpr uint32_t kLdrAtmosRegisterExternalCode   = 65000;
 static constexpr uint32_t kLdrAtmosUnregisterExternalCode = 65001;

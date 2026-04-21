@@ -277,6 +277,18 @@ static void handleGeneralChannel() {
             } else if (g_foregroundAppletActive) {
                 switchu::FileLog::log("[sams] game suspended, closing foreground applet for menu restart");
                 g_pendingForegroundAppletHome = true;
+            } else if (daemon::menu_la::isActive() && daemon::menu_la::isHoldableSlot() && g_smiMenuReady) {
+                // Menu is held in a holdable slot (eShop/Cabinet) and ready.
+                // Resume in-place instead of terminate+relaunch: notify the
+                // menu that the app is suspended and wake its event loop so
+                // am routes foreground back to it.
+                switchu::FileLog::log("[sams] holding menu alive (slot=0x%X), notify ApplicationSuspended tid=0x%016lX",
+                    (unsigned)daemon::menu_la::currentAppletId(),
+                    daemon::app::suspendedTitleId());
+                pushNotification(smi::MenuMessage::ApplicationSuspended,
+                                 daemon::app::suspendedTitleId());
+                if (daemon::menu_la::isSuspended())
+                    pushWakeSignal("sams", 0, daemon::app::suspendedTitleId());
             } else {
                 if (daemon::menu_la::isActive()) {
                     switchu::FileLog::log("[sams] terminating menu for Home restart");
@@ -365,6 +377,16 @@ static void handleAppletMessages() {
                 } else if (g_foregroundAppletActive) {
                     switchu::FileLog::log("[ae] game suspended, closing foreground applet for menu restart");
                     g_pendingForegroundAppletHome = true;
+                } else if (daemon::menu_la::isActive() && daemon::menu_la::isHoldableSlot() && g_smiMenuReady) {
+                    // Menu is held in a holdable slot (eShop/Cabinet) and
+                    // ready. Resume in-place instead of terminate+relaunch.
+                    switchu::FileLog::log("[ae] holding menu alive (slot=0x%X), notify ApplicationSuspended tid=0x%016lX",
+                        (unsigned)daemon::menu_la::currentAppletId(),
+                        daemon::app::suspendedTitleId());
+                    pushNotification(smi::MenuMessage::ApplicationSuspended,
+                                     daemon::app::suspendedTitleId());
+                    if (daemon::menu_la::isSuspended())
+                        pushWakeSignal("ae", 0, daemon::app::suspendedTitleId());
                 } else {
                     if (daemon::menu_la::isActive()) {
                         switchu::FileLog::log("[ae] terminating menu for Home restart");

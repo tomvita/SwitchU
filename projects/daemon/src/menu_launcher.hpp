@@ -12,6 +12,7 @@ namespace switchu::daemon::menu_la {
 static AppletHolder g_holder = {};
 static bool g_active = false;
 static bool g_suspended = false;
+static AppletId g_currentAppletId = AppletId_None;
 
 inline bool isActive() {
     return g_active && appletHolderActive(&g_holder);
@@ -25,23 +26,47 @@ inline void setSuspended(bool v) {
     g_suspended = v;
 }
 
+inline AppletId currentAppletId() {
+    return g_currentAppletId;
+}
+
+// Slots where the menu should be kept alive across game launches and resumed
+// (rather than terminated and relaunched) on Home-from-game. These slots are
+// confirmed to survive am's suspend/resume cycle well and preserve menu state.
+// Profile (MyPage) is intentionally excluded: user prefers fresh relaunch.
+inline bool isHoldableSlot() {
+    return g_currentAppletId == AppletId_LibraryAppletShop
+        || g_currentAppletId == AppletId_LibraryAppletCabinet;
+}
+
 inline Result create() {
+    switchu::FileLog::log("[menu_la] create() entry");
     AppletId appletId = AppletId_LibraryAppletPhotoViewer;  // default: Album (hbmenu)
+    switchu::FileLog::log("[menu_la] probe: checking launch_profile flag");
     if (access(smi::kLaunchProfileFlag, F_OK) == 0) {
         appletId = AppletId_LibraryAppletMyPage;
         switchu::FileLog::log("[menu_la] launch_profile flag present, using MyPage applet");
-    } else if (access(smi::kLaunchEshopFlag, F_OK) == 0) {
-        appletId = AppletId_LibraryAppletShop;
-        switchu::FileLog::log("[menu_la] launch_eshop flag present, using eShop applet");
+    } else if (access(smi::kLaunchCabinetFlag, F_OK) == 0) {
+        appletId = AppletId_LibraryAppletCabinet;
+        switchu::FileLog::log("[menu_la] launch_cabinet flag present, using Cabinet applet");
     } else {
-        switchu::FileLog::log("[menu_la] no flag, defaulting to Album applet");
+        switchu::FileLog::log("[menu_la] probe: checking launch_eshop flag");
+        if (access(smi::kLaunchEshopFlag, F_OK) == 0) {
+            appletId = AppletId_LibraryAppletShop;
+            switchu::FileLog::log("[menu_la] launch_eshop flag present, using eShop applet");
+        } else {
+            switchu::FileLog::log("[menu_la] no flag, defaulting to Album applet");
+        }
     }
+    switchu::FileLog::log("[menu_la] probe: calling appletCreateLibraryApplet(id=0x%X)", (unsigned)appletId);
     Result rc = appletCreateLibraryApplet(&g_holder,
         appletId, LibAppletMode_AllForeground);
+    switchu::FileLog::log("[menu_la] probe: appletCreateLibraryApplet returned 0x%X", rc);
     if (R_FAILED(rc)) {
         switchu::FileLog::log("[menu_la] CreateLibApplet FAIL: 0x%X", rc);
         return rc;
     }
+    g_currentAppletId = appletId;
     return 0;
 }
 
@@ -75,6 +100,18 @@ inline Result start(smi::MenuStartMode mode, const smi::SystemStatus& status) {
 
     g_active = true;
     switchu::FileLog::log("[menu_la] started (mode=%u)", static_cast<u32>(mode));
+
+    // PROBE: poll for up to 3s to see if am reports the applet finished immediately
+    for (int i = 0; i < 30; i++) {
+        svcSleepThread(100'000'000ULL); // 100ms
+        if (appletHolderCheckFinished(&g_holder)) {
+            LibAppletExitReason er = appletHolderGetExitReason(&g_holder);
+            switchu::FileLog::log("[menu_la] probe: holder FINISHED early after %dms, exit_reason=%d",
+                                  (i+1)*100, (int)er);
+            return 0;
+        }
+    }
+    switchu::FileLog::log("[menu_la] probe: holder still alive after 3s");
     return 0;
 }
 
@@ -91,6 +128,7 @@ inline void terminate() {
     appletHolderClose(&g_holder);
     g_active = false;
     g_suspended = false;
+    g_currentAppletId = AppletId_None;
 }
 
 inline bool checkFinished() {
@@ -100,6 +138,7 @@ inline bool checkFinished() {
         appletHolderClose(&g_holder);
         g_active = false;
         g_suspended = false;
+        g_currentAppletId = AppletId_None;
         return true;
     }
     return false;
