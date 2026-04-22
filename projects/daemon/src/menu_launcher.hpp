@@ -36,7 +36,8 @@ inline AppletId currentAppletId() {
 // Profile (MyPage) is intentionally excluded: user prefers fresh relaunch.
 inline bool isHoldableSlot() {
     return g_currentAppletId == AppletId_LibraryAppletShop
-        || g_currentAppletId == AppletId_LibraryAppletCabinet;
+        || g_currentAppletId == AppletId_LibraryAppletCabinet
+        || g_currentAppletId == AppletId_LibraryAppletAuth;
 }
 
 inline Result create() {
@@ -46,16 +47,28 @@ inline Result create() {
     if (access(smi::kLaunchProfileFlag, F_OK) == 0) {
         appletId = AppletId_LibraryAppletMyPage;
         switchu::FileLog::log("[menu_la] launch_profile flag present, using MyPage applet");
-    } else if (access(smi::kLaunchCabinetFlag, F_OK) == 0) {
-        appletId = AppletId_LibraryAppletCabinet;
-        switchu::FileLog::log("[menu_la] launch_cabinet flag present, using Cabinet applet");
     } else {
-        switchu::FileLog::log("[menu_la] probe: checking launch_eshop flag");
-        if (access(smi::kLaunchEshopFlag, F_OK) == 0) {
-            appletId = AppletId_LibraryAppletShop;
-            switchu::FileLog::log("[menu_la] launch_eshop flag present, using eShop applet");
+        switchu::FileLog::log("[menu_la] probe: checking launch_auth flag");
+        if (access(smi::kLaunchAuthFlag, F_OK) == 0) {
+            appletId = AppletId_LibraryAppletAuth;
+            switchu::FileLog::log("[menu_la] launch_auth flag present, using Auth applet");
         } else {
-            switchu::FileLog::log("[menu_la] no flag, defaulting to Album applet");
+            switchu::FileLog::log("[menu_la] probe: checking launch_cabinet flag");
+            if (access(smi::kLaunchCabinetFlag, F_OK) == 0) {
+                appletId = AppletId_LibraryAppletCabinet;
+                switchu::FileLog::log("[menu_la] launch_cabinet flag present, using Cabinet applet");
+            } else {
+                switchu::FileLog::log("[menu_la] probe: checking launch_eshop flag");
+                if (access(smi::kLaunchEshopFlag, F_OK) == 0) {
+                    appletId = AppletId_LibraryAppletShop;
+                    switchu::FileLog::log("[menu_la] launch_eshop flag present, using eShop applet");
+                    switchu::FileLog::log("[menu_la] WARN: eShop slot is BROKEN on HOS 22.1+ "
+                                          "(systemWeb 0x1042 fatalThrow 0x4A2 / 2162-0002). "
+                                          "Use launch_auth or launch_cabinet instead.");
+                } else {
+                    switchu::FileLog::log("[menu_la] no flag, defaulting to Album applet");
+                }
+            }
         }
     }
     switchu::FileLog::log("[menu_la] probe: calling appletCreateLibraryApplet(id=0x%X)", (unsigned)appletId);

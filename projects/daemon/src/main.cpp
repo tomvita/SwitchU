@@ -704,10 +704,12 @@ static void mainLoop() {
 #ifdef ENABLE_NRO_LAUNCHER
     if (daemon::ipc::g_launchMenuRequested.exchange(false)) {
         switchu::FileLog::log("[main] LaunchMenu IPC received");
-        // Remove launch_eshop/launch_profile flags so the menu launches
-        // as Album (default), not the SwitchU menu.
+        // Remove launch_* flags so the menu launches as Album (default),
+        // not the SwitchU menu.
         remove(smi::kLaunchEshopFlag);
         remove(smi::kLaunchProfileFlag);
+        remove(smi::kLaunchAuthFlag);
+        remove(smi::kLaunchCabinetFlag);
         if (daemon::menu_la::isActive()) {
             switchu::FileLog::log("[main] terminating current menu for LaunchMenu IPC");
             daemon::menu_la::terminate();

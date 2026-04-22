@@ -129,12 +129,25 @@ static constexpr const char* kBreezeActiveFlag   = "sdmc:/config/SwitchU/breeze_
 // resume the suspended game instead of relaunching the menu after Breeze exits.
 static constexpr const char* kBreezeGotoGameFlag = "sdmc:/config/SwitchU/breeze_goto_game";
 // Menu applet selection — determined by flag files.
-// Priority: launch_profile > launch_cabinet > launch_eshop > Album (default).
+// Priority: launch_profile > launch_auth > launch_cabinet > launch_eshop > Album (default).
 // When no flag is present the daemon launches Album (hbmenu).
-// NOTE: launch_eshop (LibraryAppletShop, 0x010000000000100B) is broken on
-// HOS 22.1+. Users on HOS 22+ should use launch_cabinet instead, which takes
-// over the amiibo Cabinet slot (0x0100000000001002) and is confirmed working.
+//
+// NOTE: launch_eshop (LibraryAppletShop, 0x010000000000100B) is BROKEN on HOS
+// 22.1+ and cannot be fixed from homebrew. Although our menu boots into the
+// Shop slot successfully, the LibAppletShop flow on HOS 22.1 immediately spawns
+// Nintendo's systemWeb process (0x0100000000001042) as a child to host the
+// storefront. systemWeb hits an internal precondition check, calls
+// fatalThrow(0x4A2) — user sees Atmosphère crash screen "Error Code
+// 2162-0002". This is Nintendo code we cannot patch.
+//
+// Working slot alternatives on HOS 22+:
+//   launch_profile  — MyPage applet  (0x0100000000001013)
+//   launch_auth     — Parental Controls PIN applet (0x0100000000001001)
+//   launch_cabinet  — amiibo Cabinet applet (0x0100000000001002)
+// Using Auth disables Parental Controls PIN entry; only use it on consoles
+// where Parental Controls are not in use.
 static constexpr const char* kLaunchProfileFlag  = "sdmc:/config/SwitchU/launch_profile";
+static constexpr const char* kLaunchAuthFlag     = "sdmc:/config/SwitchU/launch_auth";
 static constexpr const char* kLaunchCabinetFlag  = "sdmc:/config/SwitchU/launch_cabinet";
 static constexpr const char* kLaunchEshopFlag    = "sdmc:/config/SwitchU/launch_eshop";
 static constexpr uint32_t kLdrAtmosRegisterExternalCode   = 65000;
