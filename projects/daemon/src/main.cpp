@@ -251,6 +251,19 @@ static bool g_pendingForegroundAppletHome = false;
 static bool g_pendingHomeMenuLaunch = false;
 static const char* g_pendingHomeMenuSource = nullptr;
 static uint64_t g_pendingHomeMenuStartedAt = 0;
+
+// Breeze Home toggle (fork-only): see smi::kBreezeHomeToggleFlag.
+enum class BreezeToggleMode : uint8_t { Off, Keep, Restart };
+static bool g_breezeCandidate = false;       // Album / User Page applet that may be Breeze
+static bool g_breezeSession = false;         // that applet announced itself as Breeze
+static bool g_breezeViaUserPage = false;     // started through the profile takeover
+static AccountUid g_breezeUid{};
+static bool g_breezeHidden = false;          // keep: game in front, Breeze held behind it
+static bool g_breezeResumeOnClose = false;   // restart: resume the game once Breeze closed
+static bool g_breezeCloseForGame = false;    // held Breeze closing so the game can open an applet
+static bool g_breezeRelaunchPending = false; // next HOME from the game reopens Breeze
+static uint64_t g_breezePollTick = 0;
+
 static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
 
@@ -801,6 +814,153 @@ static bool takeForegroundFromRunningApp(const char* source) {
     return true;
 }
 
+// Breeze opts in through smi::kBreezeHomeToggleFlag and announces itself with
+// smi::kBreezeRunningFlag when it starts inside the Album (hbmenu) or User Page
+// (profile takeover) applet. While it runs, HOME toggles between Breeze and the
+// suspended game instead of reopening the menu.
+static bool breezeFlagExists(const char* path) {
+    FILE* file = fopen(path, "rb");
+    if (!file)
+        return false;
+    fclose(file);
+    return true;
+}
+
+static BreezeToggleMode readBreezeToggleMode() {
+    FILE* file = fopen(smi::kBreezeHomeToggleFlag, "rb");
+    if (!file)
+        return BreezeToggleMode::Off;
+    char value[16] = {};
+    fread(value, 1, sizeof(value) - 1, file);
+    fclose(file);
+    if (std::strncmp(value, "restart", 7) == 0)
+        return BreezeToggleMode::Restart;
+    if (std::strncmp(value, "keep", 4) == 0)
+        return BreezeToggleMode::Keep;
+    return BreezeToggleMode::Off;
+}
+
+// Fast restart relaunches the slot Breeze came from. Only the profile takeover
+// boots Breeze directly; from hbmenu it would land in hbmenu, so Breeze is kept
+// alive there instead.
+static BreezeToggleMode effectiveBreezeMode() {
+    const BreezeToggleMode mode = readBreezeToggleMode();
+    if (mode == BreezeToggleMode::Restart && !g_breezeViaUserPage)
+        return BreezeToggleMode::Keep;
+    return mode;
+}
+
+static void beginBreezeCandidate(bool viaUserPage, AccountUid uid) {
+    ::remove(smi::kBreezeRunningFlag);
+    g_breezeCandidate = true;
+    g_breezeSession = false;
+    g_breezeViaUserPage = viaUserPage;
+    g_breezeUid = uid;
+    g_breezeHidden = false;
+    g_breezeResumeOnClose = false;
+    g_breezeCloseForGame = false;
+    g_breezeRelaunchPending = false;
+    g_breezePollTick = 0;
+}
+
+static bool breezeSkipForegroundRestore() {
+    return g_breezeResumeOnClose || g_breezeCloseForGame;
+}
+
+// A library applet held behind the game blocks the game's own library applets
+// (keyboard, error dialogs). Close Breeze as soon as the game asks for one.
+static void closeHeldBreezeIfGameNeedsApplet(const char* trigger) {
+    if (!g_breezeHidden || g_breezeCloseForGame || !daemon::app::isRunning())
+        return;
+    bool appletsLeft = false;
+    const Result rc = daemon::app::areLibraryAppletsLeft(&appletsLeft);
+    if (R_FAILED(rc) || !appletsLeft)
+        return;
+    switchu::FileLog::log("[breeze] game opened a library applet (%s); closing held Breeze",
+                          trigger);
+    g_breezeCloseForGame = true;
+    g_pendingForegroundAppletHome = true;
+}
+
+// Returns true when HOME was consumed by the Breeze toggle.
+static bool handleBreezeHome(const char* source) {
+    if (!g_breezeSession || !g_foregroundAppletActive || g_breezeCloseForGame)
+        return false;
+
+    if (g_breezeHidden || (daemon::app::isRunning() && daemon::app::hasForeground())) {
+        // Game in front, Breeze held behind it: reclaiming the foreground shows
+        // Breeze again without restarting it.
+        if (!takeForegroundFromRunningApp(source)) {
+            switchu::FileLog::log("[%s] HOME -> Breeze aborted: foreground request failed",
+                                  source);
+            return true;
+        }
+        g_breezeHidden = false;
+        switchu::FileLog::log("[%s] HOME -> Breeze (held)", source);
+        return true;
+    }
+
+    if (!daemon::app::isRunning())
+        return false; // nothing to toggle to: exit to the Wii U menu as usual
+
+    const BreezeToggleMode mode = effectiveBreezeMode();
+    if (mode == BreezeToggleMode::Off)
+        return false;
+
+    if (mode == BreezeToggleMode::Keep) {
+        const Result rc = daemon::app::resume();
+        if (R_FAILED(rc)) {
+            switchu::FileLog::log("[%s] HOME -> game resume FAIL: 0x%X", source, rc);
+            return false;
+        }
+        g_breezeHidden = true;
+        switchu::FileLog::log("[%s] HOME -> game, holding Breeze", source);
+        return true;
+    }
+
+    g_breezeResumeOnClose = true;
+    g_pendingForegroundAppletHome = true;
+    switchu::FileLog::log("[%s] HOME -> game, closing Breeze for fast restart", source);
+    return true;
+}
+
+// Called after the Album / User Page applet closed. Returns true when the
+// Breeze toggle handed the foreground to the game, so the menu stays closed.
+static bool finishBreezeApplet(const char* name) {
+    const bool wasBreeze = g_breezeSession;
+    const bool resumeGame = g_breezeResumeOnClose;
+    const bool closedForGame = g_breezeCloseForGame;
+    g_breezeCandidate = false;
+    g_breezeSession = false;
+    g_breezeHidden = false;
+    g_breezeResumeOnClose = false;
+    g_breezeCloseForGame = false;
+    ::remove(smi::kBreezeRunningFlag);
+    if (!wasBreeze)
+        return false;
+
+    if (closedForGame && daemon::app::isRunning()) {
+        g_breezeRelaunchPending = g_breezeViaUserPage;
+        switchu::FileLog::log("[breeze] %s closed for a game applet; relaunch_on_home=%d",
+                              name, g_breezeRelaunchPending ? 1 : 0);
+        return true;
+    }
+
+    if (resumeGame && daemon::app::isRunning()) {
+        const Result rc = daemon::app::resume();
+        switchu::FileLog::log("[breeze] %s closed; resume game rc=0x%X", name, rc);
+        if (R_SUCCEEDED(rc)) {
+            g_breezeRelaunchPending = true;
+            return true;
+        }
+    }
+
+    // The runner skipped reclaiming the foreground for these cases.
+    if (resumeGame || closedForGame)
+        appletRequestToGetForeground();
+    return false;
+}
+
 static Result startControlCacheWorker();
 static void stopControlCacheWorker();
 static Result startEventManager();
@@ -815,6 +975,23 @@ static Result launchPendingHomeMenu() {
     g_pendingHomeMenuLaunch = false;
     g_pendingHomeMenuSource = nullptr;
     g_pendingHomeMenuStartedAt = 0;
+
+    if (g_breezeRelaunchPending) {
+        g_breezeRelaunchPending = false;
+        if (readBreezeToggleMode() != BreezeToggleMode::Off) {
+            daemon::SystemAction action{};
+            action.type = daemon::SystemActionType::OpenUserPage;
+            action.uid = g_breezeUid;
+            const Result queueRc = g_actionQueue.enqueue(action);
+            switchu::FileLog::log(
+                "[%s] HOME foreground acquired; relaunching Breeze via User Page rc=0x%X",
+                source, queueRc);
+            if (R_SUCCEEDED(queueRc)) {
+                logHomeState(source, "after");
+                return 0;
+            }
+        }
+    }
 
     const auto status = buildSystemStatus();
     switchu::FileLog::log(
@@ -905,6 +1082,9 @@ static void openMenuFromHome(const char* source) {
         switchu::FileLog::log("[%s] HOME ignored: foreground handoff already pending", source);
         return;
     }
+
+    if (handleBreezeHome(source))
+        return;
 
     if (daemon::app::isRunning() && daemon::app::hasForeground()) {
         if (!takeForegroundFromRunningApp(source)) {
@@ -1046,8 +1226,9 @@ static void handleAppletMessages() {
         case 2:
         // AppletMessage_ChangeIntoBackground: another foreground participant is
         // taking over. The menu no longer stays alive in a hidden suspended
-        // state, so there is no extra holder to clean up here.
+        // state; only a Breeze applet held behind the game may need to make way.
         switchu::FileLog::log("[ae] -> ChangeIntoBackground");
+        closeHeldBreezeIfGameNeedsApplet("ChangeIntoBackground");
         break;
 
         case 20:
@@ -1068,7 +1249,9 @@ static void handleAppletMessages() {
         case 26:
         switchu::FileLog::log("[ae] -> Wakeup");
         g_batteryRefreshPending.store(true);
-        if (daemon::app::isRunning() && !daemon::menu_la::isActive()) {
+        // Breeze in front of a suspended game stays in front after wake.
+        if (daemon::app::isRunning() && !daemon::menu_la::isActive() &&
+            !(g_breezeSession && !g_breezeHidden)) {
             Result rc = daemon::app::resume();
             if (R_FAILED(rc)) {
                 switchu::FileLog::log("[ae] wake resume FAIL: 0x%X", rc);
@@ -1093,6 +1276,43 @@ static void pumpForegroundAppletMessages() {
     handleAppletMessages();
 }
 
+static constexpr uint64_t kBreezePollIntervalNs = 250'000'000ULL;
+
+static void pumpBreezeAppletMessages() {
+    pumpForegroundAppletMessages();
+    if (!g_breezeCandidate)
+        return;
+
+    const uint64_t now = armGetSystemTick();
+    if (g_breezePollTick != 0 && armTicksToNs(now - g_breezePollTick) < kBreezePollIntervalNs)
+        return;
+    g_breezePollTick = now;
+
+    if (!g_breezeSession) {
+        if (!breezeFlagExists(smi::kBreezeRunningFlag))
+            return;
+        g_breezeSession = true;
+        switchu::FileLog::log("[breeze] session started via %s",
+                              g_breezeViaUserPage ? "User Page" : "Album");
+    }
+
+    // mainLoop is blocked while the applet runs, so watch the game here.
+    if (daemon::app::checkFinished()) {
+        switchu::FileLog::log("[breeze] game exited while Breeze open (held=%d)",
+                              g_breezeHidden ? 1 : 0);
+        g_pendingHomeMenuLaunch = false;
+        g_pendingHomeMenuSource = nullptr;
+        g_pendingHomeMenuStartedAt = 0;
+        if (g_breezeHidden) {
+            g_breezeHidden = false;
+            appletRequestToGetForeground();
+        }
+        return;
+    }
+
+    closeHeldBreezeIfGameNeedsApplet("poll");
+}
+
 static bool consumeForegroundAppletHomeRequest() {
     if (!g_pendingForegroundAppletHome)
         return false;
@@ -1102,7 +1322,7 @@ static bool consumeForegroundAppletHomeRequest() {
 
 static Result launchLibraryApplet(AppletId id, const char* name,
                                   const void* inData = nullptr, size_t inDataSize = 0,
-                                  u32 libAppletVersion = 0) {
+                                  u32 libAppletVersion = 0, bool breezeCandidate = false) {
     switchu::FileLog::log("[applet] launching %s id=0x%X version=0x%X in=%zu",
                           name, (u32)id, libAppletVersion, inDataSize);
     Result fgRc = appletRequestToGetForeground();
@@ -1119,9 +1339,11 @@ static Result launchLibraryApplet(AppletId id, const char* name,
         .playStartupSound = true,
         .inputs = inData && inDataSize ? &input : nullptr,
         .inputCount = inData && inDataSize ? 1U : 0U,
+        .skipForegroundRestore = breezeCandidate ? breezeSkipForegroundRestore : nullptr,
     };
     const Result rc = daemon::runLibraryApplet(
-        request, pumpForegroundAppletMessages,
+        request,
+        breezeCandidate ? pumpBreezeAppletMessages : pumpForegroundAppletMessages,
         consumeForegroundAppletHomeRequest);
     g_foregroundAppletActive = false;
     return rc;
@@ -1279,9 +1501,10 @@ static Result launchUserProfile(AccountUid uid) {
         .playStartupSound = true,
         .inputs = &appletInput,
         .inputCount = 1,
+        .skipForegroundRestore = breezeSkipForegroundRestore,
     };
     const Result rc = daemon::runLibraryApplet(
-        request, pumpForegroundAppletMessages,
+        request, pumpBreezeAppletMessages,
         consumeForegroundAppletHomeRequest);
     g_foregroundAppletActive = false;
     return rc;
@@ -1550,15 +1773,18 @@ static bool handleAction(daemon::SystemAction& action) {
 
         case daemon::SystemActionType::OpenAlbum: {
             const u8 albumArg = AlbumLaArg_ShowAllAlbumFilesForHomeMenu;
+            beginBreezeCandidate(false, AccountUid{});
             Result rc = launchLibraryApplet(AppletId_LibraryAppletPhotoViewer,
                                             "Album",
                                             &albumArg,
                                             sizeof(albumArg),
-                                            0x10000);
+                                            0x10000,
+                                            true);
             recordOperationResult(action.requestId, smi::SystemMessage::LaunchAlbum, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] album FAIL: 0x%X", rc);
-            relaunchMenuAfterApplet("Album");
+            if (!finishBreezeApplet("Album"))
+                relaunchMenuAfterApplet("Album");
             return true;
         }
 
@@ -1610,11 +1836,13 @@ static bool handleAction(daemon::SystemAction& action) {
         }
 
         case daemon::SystemActionType::OpenUserPage: {
+            beginBreezeCandidate(true, action.uid);
             Result rc = launchUserProfile(action.uid);
             recordOperationResult(action.requestId, smi::SystemMessage::LaunchUserPage, rc);
             if (R_FAILED(rc))
                 switchu::FileLog::log("[action] User Page FAIL: 0x%X", rc);
-            relaunchMenuAfterApplet("UserPage");
+            if (!finishBreezeApplet("UserPage"))
+                relaunchMenuAfterApplet("UserPage");
             return true;
         }
 
@@ -1766,6 +1994,7 @@ static void mainLoop() {
 
     if (daemon::app::checkFinished()) {
         switchu::FileLog::log("[main] app exited");
+        g_breezeRelaunchPending = false;
         if (g_pendingHomeMenuLaunch) {
             switchu::FileLog::log("[main] clearing pending HOME foreground handoff: app exited");
             g_pendingHomeMenuLaunch = false;
@@ -2135,6 +2364,7 @@ int main(int argc, char* argv[]) {
     if (R_FAILED(rc))
         switchu::FileLog::log("[daemon] event manager failed: 0x%X (non-fatal)", rc);
 
+    ::remove(smi::kBreezeRunningFlag);
     switchu::FileLog::log("[daemon] launching menu...");
     rc = daemon::menu_la::launch(smi::MenuStartMode::StartupBoot, buildSystemStatus());
     if (R_FAILED(rc))

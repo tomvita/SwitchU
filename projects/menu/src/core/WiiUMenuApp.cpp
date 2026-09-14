@@ -4662,9 +4662,24 @@ void WiiUMenuApp::onUpdate(float dt) {
             DebugLog::log("[notify] msg=%u", (unsigned)notif.msg);
 
             switch (notif.msg) {
-            case switchu::smi::MenuMessage::HomeRequest:
+            case switchu::smi::MenuMessage::HomeRequest: {
+                // Fork: HOME with a suspended game goes back to the game.
+                const std::uint64_t suspendedId = m_launcher.suspendedTitleId();
+                if (!m_editMode && m_launcher.isAppSuspended(suspendedId)) {
+                    std::string title;
+                    for (auto& icon : m_grid->allIcons()) {
+                        if (icon->titleId() == suspendedId) {
+                            title = icon->title();
+                            break;
+                        }
+                    }
+                    DebugLog::log("[notify] HomeRequest -> resume 0x%016lX", suspendedId);
+                    resumeSuspendedApplication(suspendedId, title);
+                    break;
+                }
                 m_sysMsg.pushAction(SysAction::HomeButton);
                 break;
+            }
             case switchu::smi::MenuMessage::ApplicationExited:
                 m_launcher.setAppRunning(false);
                 m_launcher.setAppHasForeground(false);

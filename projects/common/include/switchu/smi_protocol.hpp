@@ -162,6 +162,16 @@ static constexpr const char* kAppCatalogPath    = "sdmc:/config/SwitchU/applist.
 static constexpr const char* kAppCatalogTmpPath = "sdmc:/config/SwitchU/applist.tmp";
 static constexpr const char* kAppCatalogBakPath = "sdmc:/config/SwitchU/applist.bak";
 
+// Breeze Home toggle (fork-only). Both files belong to Breeze:
+// - kBreezeHomeToggleFlag holds "keep" (Breeze stays alive behind the game) or
+//   "restart" (Breeze closes on HOME and the next HOME relaunches it through the
+//   profile takeover). A missing file turns the toggle off.
+// - kBreezeRunningFlag is written when Breeze starts with the toggle on and
+//   removed by its Exit button. The daemon also removes it once the applet has
+//   closed, so a crash cannot leave it behind.
+static constexpr const char* kBreezeHomeToggleFlag = "sdmc:/config/SwitchU/breeze_home_toggle";
+static constexpr const char* kBreezeRunningFlag    = "sdmc:/config/SwitchU/breeze_running";
+
 static constexpr uint64_t kMenuTakeoverProgramId = 0x010000000000100DULL;
 static constexpr uint64_t kMenuProcessProgramId  = 0x010000000000FFFFULL;
 static constexpr uint32_t kLdrAtmosRegisterExternalCode   = 65000;

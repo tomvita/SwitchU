@@ -114,11 +114,13 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
                                  request.outputTransferSize);
     }
 
-    const Result foregroundRc = appletRequestToGetForeground();
+    const bool skipRestore =
+        request.skipForegroundRestore && request.skipForegroundRestore();
+    const Result foregroundRc = skipRestore ? 0 : appletRequestToGetForeground();
     switchu::FileLog::log(
-        "[applet] %s closed reason=%d rc=0x%X module=%u desc=%u restore_fg=0x%X",
+        "[applet] %s closed reason=%d rc=0x%X module=%u desc=%u restore_fg=0x%X skipped=%d",
         request.name, static_cast<int>(exitReason), rc,
-        R_MODULE(rc), R_DESCRIPTION(rc), foregroundRc);
+        R_MODULE(rc), R_DESCRIPTION(rc), foregroundRc, skipRestore ? 1 : 0);
     return rc;
 }
 

@@ -23,6 +23,9 @@ struct LibraryAppletRequest {
     void* output = nullptr;
     std::size_t outputSize = 0;
     std::size_t* outputTransferSize = nullptr;
+    // Asked once the applet has closed; returning true leaves the foreground
+    // alone because the caller hands it straight to the application.
+    bool (*skipForegroundRestore)() = nullptr;
 };
 
 using LibraryAppletPump = void (*)();
