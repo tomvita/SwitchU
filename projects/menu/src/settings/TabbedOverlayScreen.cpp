@@ -809,7 +809,12 @@ void TabbedOverlayScreen::drawDropdown(nxui::Renderer& ren, const nxui::Rect& pa
             if (tsz.x > maxWidth) {
                 std::string ellipsis = "...";
                 while (!displayText.empty()) {
-                    displayText.pop_back();
+                    // Drop one whole UTF-8 character so multi-byte text stays valid.
+                    while (!displayText.empty() &&
+                           (static_cast<unsigned char>(displayText.back()) & 0xC0) == 0x80)
+                        displayText.pop_back();
+                    if (!displayText.empty())
+                        displayText.pop_back();
                     tsz = m_smallFont->measure(displayText + ellipsis);
                     if (tsz.x <= maxWidth || displayText.empty())
                         break;
@@ -846,8 +851,14 @@ void TabbedOverlayScreen::drawTrackChangedToast(nxui::Renderer& ren, const nxui:
     float maxTextWidth = 420.f - 40.f;
     nxui::Vec2 tsz = m_smallFont->measure(displayText);
     if (tsz.x * 0.78f > maxTextWidth) {
-        while (!displayText.empty() && m_smallFont->measure(displayText + "...").x * 0.78f > maxTextWidth)
-            displayText.pop_back();
+        while (!displayText.empty() && m_smallFont->measure(displayText + "...").x * 0.78f > maxTextWidth) {
+            // Drop one whole UTF-8 character so multi-byte text stays valid.
+            while (!displayText.empty() &&
+                   (static_cast<unsigned char>(displayText.back()) & 0xC0) == 0x80)
+                displayText.pop_back();
+            if (!displayText.empty())
+                displayText.pop_back();
+        }
         displayText += "...";
         tsz = m_smallFont->measure(displayText);
     }

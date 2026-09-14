@@ -189,8 +189,13 @@ std::string ellipsize(nxui::Font* font, const std::string& text, float maxWidth,
         return text;
 
     std::string out = text;
-    while (!out.empty() && measureTextCached(font, out + "...").x * scale > maxWidth)
-        out.pop_back();
+    while (!out.empty() && measureTextCached(font, out + "...").x * scale > maxWidth) {
+        // Drop one whole UTF-8 character so multi-byte text stays valid.
+        while (!out.empty() && (static_cast<unsigned char>(out.back()) & 0xC0) == 0x80)
+            out.pop_back();
+        if (!out.empty())
+            out.pop_back();
+    }
 
     std::string result = out.empty() ? text : out + "...";
     if (g_ellipsizeCache.size() >= kEllipsizeCacheLimit)

@@ -62,16 +62,27 @@ std::vector<std::string> Label::wrappedLines(float maxWidth) const {
     auto pushWrappedWord = [&](const std::string& word) {
         if (word.empty()) return;
 
+        // Break between whole UTF-8 characters: titles in Japanese, Chinese
+        // or Korean often have no spaces and must not be split mid-character.
         std::string chunk;
-        for (char ch : word) {
+        std::size_t i = 0;
+        while (i < word.size()) {
+            const unsigned char lead = static_cast<unsigned char>(word[i]);
+            std::size_t length = lead < 0x80 ? 1
+                : (lead >> 5) == 0x6 ? 2
+                : (lead >> 4) == 0xE ? 3
+                : (lead >> 3) == 0x1E ? 4
+                : 1;
+            length = std::min(length, word.size() - i);
             std::string test = chunk;
-            test.push_back(ch);
+            test.append(word, i, length);
             float w = m_font->measure(test).x * m_textScale;
             if (!chunk.empty() && w > width) {
                 lines.push_back(chunk);
                 chunk.clear();
             }
-            chunk.push_back(ch);
+            chunk.append(word, i, length);
+            i += length;
         }
         if (!chunk.empty())
             lines.push_back(chunk);

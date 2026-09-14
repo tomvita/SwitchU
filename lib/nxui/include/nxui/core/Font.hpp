@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include <list>
+#include <vector>
 
 namespace nxui {
 
@@ -43,7 +44,24 @@ private:
     // Render full string to texture (cache by string)
     Texture* getOrRender(GpuDevice& gpu, Renderer& ren, const std::string& text);
 
+    // A stretch of text drawn with one font. Characters the loaded font lacks
+    // (e.g. Japanese, Chinese, Korean) fall back to the console's system fonts.
+    struct TextRun {
+        TTF_Font*   font = nullptr;
+        std::string text;
+    };
+    TTF_Font* fontForCodepoint(Uint32 codepoint) const;
+    void splitRuns(const std::string& text, std::vector<TextRun>& runs) const;
+    SDL_Surface* renderRuns(const std::vector<TextRun>& runs) const;
+    void closeFallbacks();
+
     TTF_Font* m_font = nullptr;
+    struct FallbackSlot {
+        TTF_Font* font = nullptr;
+        bool      failed = false;
+    };
+    // One slot per system font, opened at this font's size on first use.
+    mutable std::vector<FallbackSlot> m_fallbacks;
     int       m_ptSize = 0;
     GpuDevice* m_gpu = nullptr;
     Renderer*  m_ren = nullptr;

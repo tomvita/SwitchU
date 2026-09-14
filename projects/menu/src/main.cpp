@@ -85,7 +85,9 @@ extern "C" void __libnx_initheap(void) {
 #ifdef SWITCHU_HOMEBREW
 extern "C" void userAppInit(void) {
     timeInitialize();
-    plInitialize(PlServiceType_System);
+    // pl:u: since 16.0.0 the shared system fonts nxui falls back to are only
+    // available through pl:u, not pl:s.
+    plInitialize(PlServiceType_User);
     setInitialize();
     setsysInitialize();
     accountInitialize(AccountServiceType_Application);
@@ -130,7 +132,9 @@ extern "C" void __appInit(void) {
     __libnx_init_time();
     setsysInitialize();
     setInitialize();
-    plInitialize(PlServiceType_System);
+    // pl:u: since 16.0.0 the shared system fonts nxui falls back to are only
+    // available through pl:u, not pl:s.
+    plInitialize(PlServiceType_User);
     psmInitialize();
     lblInitialize();
     splInitialize();

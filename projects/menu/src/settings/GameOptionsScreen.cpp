@@ -9,7 +9,11 @@ std::string ellipsize(nxui::Font* font, std::string text, float maxWidth, float 
     if (!font || font->measure(text).x * scale <= maxWidth)
         return text;
     while (!text.empty()) {
-        text.pop_back();
+        // Drop one whole UTF-8 character so multi-byte titles stay valid.
+        while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0) == 0x80)
+            text.pop_back();
+        if (!text.empty())
+            text.pop_back();
         if (font->measure(text + "...").x * scale <= maxWidth)
             return text + "...";
     }
