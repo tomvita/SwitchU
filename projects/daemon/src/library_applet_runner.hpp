@@ -26,6 +26,10 @@ struct LibraryAppletRequest {
     // Asked once the applet has closed; returning true leaves the foreground
     // alone because the caller hands it straight to the application.
     bool (*skipForegroundRestore)() = nullptr;
+    // Asked when an exit is requested; returning true closes the applet at
+    // once instead of waiting for it to exit. An applet held in the background
+    // can't answer an exit request, so waiting only delays the caller.
+    bool (*terminateOnExit)() = nullptr;
 };
 
 using LibraryAppletPump = void (*)();

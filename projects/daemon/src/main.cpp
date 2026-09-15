@@ -262,6 +262,7 @@ static AccountUid g_breezeUid{};
 static bool g_breezeHidden = false;          // keep: game in front, Breeze held behind it
 static bool g_breezeResumeOnClose = false;   // restart: resume the game once Breeze closed
 static bool g_breezeCloseForGame = false;    // held Breeze closing so the game can open an applet
+static bool g_breezeCloseForSleep = false;   // held Breeze closing before the console sleeps
 static bool g_breezeRelaunchPending = false; // next HOME from the game reopens Breeze
 static uint64_t g_breezePollTick = 0;
 
@@ -860,6 +861,7 @@ static void beginBreezeCandidate(bool viaUserPage, AccountUid uid) {
     g_breezeHidden = false;
     g_breezeResumeOnClose = false;
     g_breezeCloseForGame = false;
+    g_breezeCloseForSleep = false;
     g_breezeRelaunchPending = false;
     g_breezePollTick = 0;
 }
@@ -868,10 +870,16 @@ static bool breezeSkipForegroundRestore() {
     return g_breezeResumeOnClose || g_breezeCloseForGame;
 }
 
+// Breeze held behind the game can't answer an exit request, so asking it to
+// exit only waited out the timeout (about 3 s before sleep). Close it at once.
+static bool breezeTerminateOnExit() {
+    return g_breezeCloseForSleep || g_breezeCloseForGame;
+}
+
 // A library applet held behind the game blocks the game's own library applets
 // (keyboard, error dialogs). Close Breeze as soon as the game asks for one.
 static void closeHeldBreezeIfGameNeedsApplet(const char* trigger) {
-    if (!g_breezeHidden || g_breezeCloseForGame || !daemon::app::isRunning())
+    if (!g_breezeHidden || g_breezeCloseForGame || g_breezeCloseForSleep || !daemon::app::isRunning())
         return;
     bool appletsLeft = false;
     const Result rc = daemon::app::areLibraryAppletsLeft(&appletsLeft);
@@ -885,7 +893,7 @@ static void closeHeldBreezeIfGameNeedsApplet(const char* trigger) {
 
 // Returns true when HOME was consumed by the Breeze toggle.
 static bool handleBreezeHome(const char* source) {
-    if (!g_breezeSession || !g_foregroundAppletActive || g_breezeCloseForGame)
+    if (!g_breezeSession || !g_foregroundAppletActive || g_breezeCloseForGame || g_breezeCloseForSleep)
         return false;
 
     if (g_breezeHidden || (daemon::app::isRunning() && daemon::app::hasForeground())) {
@@ -902,7 +910,7 @@ static bool handleBreezeHome(const char* source) {
     }
 
     if (!daemon::app::isRunning())
-        return false; // nothing to toggle to: exit to the Wii U menu as usual
+        return false; // nothing to toggle to: exit to the SwitchU menu as usual
 
     const BreezeToggleMode mode = effectiveBreezeMode();
     if (mode == BreezeToggleMode::Off)
@@ -925,20 +933,50 @@ static bool handleBreezeHome(const char* source) {
     return true;
 }
 
+static void startPowerSequence(const char* source, smi::SystemMessage action);
+
+// Sleeping with Breeze held behind the game left the game unresponsive after
+// wake, and HOME and the power menu stopped reaching the daemon: a held
+// AllForeground applet blocks the game's own applets, which games often open
+// right after waking. Close the held Breeze first; the sleep starts once its
+// applet has closed (see finishBreezeApplet).
+static bool deferSleepForHeldBreeze(const char* source) {
+    if (!g_breezeSession || !g_foregroundAppletActive || !g_breezeHidden)
+        return false;
+    if (!g_breezeCloseForSleep) {
+        switchu::FileLog::logCommit("[%s] sleep requested; closing held Breeze first", source);
+        g_breezeCloseForSleep = true;
+        g_pendingForegroundAppletHome = true;
+    }
+    return true;
+}
+
 // Called after the Album / User Page applet closed. Returns true when the
 // Breeze toggle handed the foreground to the game, so the menu stays closed.
 static bool finishBreezeApplet(const char* name) {
     const bool wasBreeze = g_breezeSession;
     const bool resumeGame = g_breezeResumeOnClose;
     const bool closedForGame = g_breezeCloseForGame;
+    const bool closedForSleep = g_breezeCloseForSleep;
     g_breezeCandidate = false;
     g_breezeSession = false;
     g_breezeHidden = false;
     g_breezeResumeOnClose = false;
     g_breezeCloseForGame = false;
+    g_breezeCloseForSleep = false;
     ::remove(smi::kBreezeRunningFlag);
     if (!wasBreeze)
         return false;
+
+    if (closedForSleep) {
+        // HOME after wake reopens Breeze through the profile takeover. From
+        // hbmenu that isn't possible, so HOME opens the SwitchU menu instead.
+        g_breezeRelaunchPending = g_breezeViaUserPage && daemon::app::isRunning();
+        switchu::FileLog::logCommit("[breeze] %s closed for sleep; relaunch_on_home=%d",
+                                    name, g_breezeRelaunchPending ? 1 : 0);
+        startPowerSequence("breeze-sleep", smi::SystemMessage::EnterSleep);
+        return true;
+    }
 
     if (closedForGame && daemon::app::isRunning()) {
         g_breezeRelaunchPending = g_breezeViaUserPage;
@@ -1198,6 +1236,8 @@ static void handleGeneralChannel() {
         break;
         case 3:
         switchu::FileLog::log("[sams] -> Sleep");
+        if (deferSleepForHeldBreeze("sams"))
+            break;
         startPowerSequence("sams-sleep", smi::SystemMessage::EnterSleep);
         break;
         case 5:
@@ -1240,6 +1280,8 @@ static void handleAppletMessages() {
         case 29:
         case 32:
         switchu::FileLog::log("[ae] -> Sleep (msg=%u)", msg);
+        if (deferSleepForHeldBreeze("ae"))
+            break;
         // The application keeps its IApplicationAccessor across system sleep,
         // but must reacquire the foreground after wake. Keep our session state
         // in sync so the Wakeup path is allowed to call app::resume().
@@ -1341,6 +1383,7 @@ static Result launchLibraryApplet(AppletId id, const char* name,
         .inputs = inData && inDataSize ? &input : nullptr,
         .inputCount = inData && inDataSize ? 1U : 0U,
         .skipForegroundRestore = breezeCandidate ? breezeSkipForegroundRestore : nullptr,
+        .terminateOnExit = breezeCandidate ? breezeTerminateOnExit : nullptr,
     };
     const Result rc = daemon::runLibraryApplet(
         request,
@@ -1503,6 +1546,7 @@ static Result launchUserProfile(AccountUid uid) {
         .inputs = &appletInput,
         .inputCount = 1,
         .skipForegroundRestore = breezeSkipForegroundRestore,
+        .terminateOnExit = breezeTerminateOnExit,
     };
     const Result rc = daemon::runLibraryApplet(
         request, pumpBreezeAppletMessages,

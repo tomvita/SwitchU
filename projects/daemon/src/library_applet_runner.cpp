@@ -79,6 +79,7 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
     guard.started = true;
 
     bool exitWasRequested = false;
+    bool terminated = false;
     while (appletHolderActive(&guard.holder) &&
            !appletHolderCheckFinished(&guard.holder)) {
         if (pump)
@@ -86,14 +87,18 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
 
         if (!exitWasRequested && exitRequested && exitRequested()) {
             exitWasRequested = true;
-            switchu::FileLog::log("[applet] %s HOME exit requested", request.name);
-            const Result exitRc = appletHolderRequestExitOrTerminate(
-                &guard.holder, 5'000'000'000ULL);
+            const bool terminate = request.terminateOnExit && request.terminateOnExit();
+            switchu::FileLog::log("[applet] %s HOME exit requested terminate=%d",
+                                  request.name, terminate ? 1 : 0);
+            const Result exitRc = terminate
+                ? appletHolderTerminate(&guard.holder)
+                : appletHolderRequestExitOrTerminate(&guard.holder, 5'000'000'000ULL);
             if (R_FAILED(exitRc)) {
                 switchu::FileLog::log("[applet] %s HOME exit FAIL: 0x%X",
                                       request.name, exitRc);
                 rc = exitRc;
             }
+            terminated = terminate && R_SUCCEEDED(exitRc);
             break;
         }
 
@@ -102,7 +107,8 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
 
     appletHolderJoin(&guard.holder);
     const LibAppletExitReason exitReason = appletHolderGetExitReason(&guard.holder);
-    if (R_SUCCEEDED(rc))
+    // Closing the applet on purpose isn't a failure of the applet.
+    if (R_SUCCEEDED(rc) && !terminated)
         rc = exitReasonResult(exitReason);
 
     // A canceled applet does not guarantee an output storage. Trying to pop
