@@ -44,6 +44,8 @@ public:
         std::function<void()>      onSleepRequested;
         std::function<void()>      onRebootRequested;
         std::function<void()>      onShutdownRequested;
+        std::function<void()>      onHomebrewRequested;
+        std::function<void()>      onProfileRequested;
         std::function<void()>      onClose;
         std::function<void()>      onNavigateSfx;
         std::function<void()>      onActivateSfx;

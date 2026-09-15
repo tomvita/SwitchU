@@ -282,6 +282,18 @@ void QuickSettingsOverlay::setupNavigationActions() {
         }
     });
 
+    // L opens the drawer, so holding L and tapping Y or X reads as the L+Y and
+    // L+X shortcuts; the same buttons work once the drawer is already open.
+    addAction(static_cast<uint64_t>(nxui::Button::Y), [this]() {
+        if (!m_active) return;
+        if (m_callbacks.onHomebrewRequested) m_callbacks.onHomebrewRequested();
+    });
+
+    addAction(static_cast<uint64_t>(nxui::Button::X), [this]() {
+        if (!m_active) return;
+        if (m_callbacks.onProfileRequested) m_callbacks.onProfileRequested();
+    });
+
     // Dismissal (Button B, L, or Click Left Stick). L also opens the drawer,
     // so it behaves as a proper toggle without needing a second shortcut.
     addAction(static_cast<uint64_t>(nxui::Button::B), [this]() {
