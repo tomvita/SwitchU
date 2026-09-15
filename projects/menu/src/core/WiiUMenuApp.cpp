@@ -1429,10 +1429,25 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
     if ((int)slots.size() < roundedSlots)
         slots.resize(roundedSlots, 0);
 
-    std::vector<int> coveredBy(slots.size(), -1);
+    // The automatic sort orders only project over the personal layout, so the
+    // grid is composed from `display` while `slots` -- the user's own order --
+    // is what gets written back to m_layoutSlots below.
+    std::unordered_map<std::uint64_t, SortableItem> sortable;
+    sortable.reserve(byId.size());
+    for (const auto& pair : byId) {
+        const PendingApp& item = pair.second;
+        sortable.emplace(pair.first, SortableItem{
+            item.kind == GridEntryKind::Application && item.widgetColumns == 1 &&
+                item.widgetRows == 1,
+            item.widgetColumns, item.widgetRows, &item.title});
+    }
+    const std::vector<std::uint64_t> projected = projectSortedSlots(slots, sortable);
+    const std::vector<std::uint64_t>& display = projected.empty() ? slots : projected;
+
+    std::vector<int> coveredBy(display.size(), -1);
     if (m_appLayoutMode == AppLayoutMode::Grid) {
-        for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
-            auto found = byId.find(slots[static_cast<std::size_t>(index)]);
+        for (int index = 0; index < static_cast<int>(display.size()); ++index) {
+            auto found = byId.find(display[static_cast<std::size_t>(index)]);
             if (found == byId.end() ||
                 (found->second.kind != GridEntryKind::Widget &&
                  found->second.kind != GridEntryKind::Application))
@@ -1449,8 +1464,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
             for (int dy = 0; fits && dy < spanRows; ++dy) {
                 for (int dx = 0; dx < spanColumns; ++dx) {
                     const int cell = index + dy * cols + dx;
-                    if (cell >= static_cast<int>(slots.size()) ||
-                        (cell != index && slots[static_cast<std::size_t>(cell)] != 0) ||
+                    if (cell >= static_cast<int>(display.size()) ||
+                        (cell != index && display[static_cast<std::size_t>(cell)] != 0) ||
                         coveredBy[static_cast<std::size_t>(cell)] >= 0) {
                         fits = false;
                         break;
@@ -1472,8 +1487,8 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
     }
 
     std::vector<PendingApp> ordered;
-    ordered.reserve(slots.size());
-    for (int index = 0; index < static_cast<int>(slots.size()); ++index) {
+    ordered.reserve(display.size());
+    for (int index = 0; index < static_cast<int>(display.size()); ++index) {
         if (coveredBy[static_cast<std::size_t>(index)] >= 0 &&
             coveredBy[static_cast<std::size_t>(index)] != index) {
             PendingApp continuation;
@@ -1481,7 +1496,7 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
             ordered.push_back(std::move(continuation));
             continue;
         }
-        const std::uint64_t tid = slots[static_cast<std::size_t>(index)];
+        const std::uint64_t tid = display[static_cast<std::size_t>(index)];
         if (hiddenWidgetIds.count(tid))
             continue;
         if (tid == 0) {
@@ -1506,6 +1521,95 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
     }
 
     apps = std::move(ordered);
+}
+
+// The automatic sort orders (A-Z, Recent) never rewrite the personal layout:
+// they are a projection over it, so switching back to "My order" restores the
+// arrangement the user built. Folders, widgets and multi-cell tiles keep their
+// own slot; ordinary 1x1 applications fill whatever cells are left.
+//
+// Both the startup/refresh composition and every later reflow run through here,
+// otherwise a remembered sort order would only take effect on the next reflow
+// and the grid would come up in "My order" while the hint said otherwise.
+std::vector<std::uint64_t> WiiUMenuApp::projectSortedSlots(
+    const std::vector<std::uint64_t>& slots,
+    const std::unordered_map<std::uint64_t, SortableItem>& items) const {
+    if (m_config.sortMode == 0 || m_appLayoutMode != AppLayoutMode::Grid)
+        return {};
+
+    const int columns = std::clamp(m_config.gridColumns, 1, 8);
+    std::vector<std::uint64_t> projected(slots.size(), 0);
+    std::vector<bool> reserved(slots.size(), false);
+
+    for (std::size_t index = 0; index < slots.size(); ++index) {
+        const auto stored = slots[index];
+        const auto found = items.find(stored);
+        if (stored == 0 || found == items.end() || found->second.movableApplication)
+            continue;
+        projected[index] = stored;
+        const int spanColumns = std::max(1, found->second.columns);
+        const int spanRows = std::max(1, found->second.rows);
+        for (int dy = 0; dy < spanRows; ++dy) {
+            for (int dx = 0; dx < spanColumns; ++dx) {
+                const std::size_t cell = index +
+                    static_cast<std::size_t>(dy * columns + dx);
+                if (cell < reserved.size()) reserved[cell] = true;
+            }
+        }
+    }
+
+    std::unordered_map<std::uint64_t, int> personalRank;
+    int rank = 0;
+    for (const auto stored : slots) {
+        if (stored != 0 && !personalRank.count(stored))
+            personalRank.emplace(stored, rank++);
+    }
+    std::vector<std::uint64_t> applications;
+    applications.reserve(items.size());
+    for (const auto& pair : items) {
+        if (pair.second.movableApplication)
+            applications.push_back(pair.first);
+    }
+    std::sort(applications.begin(), applications.end(),
+              [&](const auto left, const auto right) {
+        const auto leftIt = personalRank.find(left);
+        const auto rightIt = personalRank.find(right);
+        const int leftRank = leftIt == personalRank.end()
+            ? std::numeric_limits<int>::max() : leftIt->second;
+        const int rightRank = rightIt == personalRank.end()
+            ? std::numeric_limits<int>::max() : rightIt->second;
+        return leftRank != rightRank ? leftRank < rightRank : left < right;
+    });
+
+    const int mode = m_config.sortMode;
+    std::stable_sort(applications.begin(), applications.end(),
+                     [&](const auto left, const auto right) {
+        if (mode == 2) {
+            const auto leftOpened = m_config.lastOpenedAt(left);
+            const auto rightOpened = m_config.lastOpenedAt(right);
+            return leftOpened != rightOpened && leftOpened > rightOpened;
+        }
+        const std::string* leftTitle = items.at(left).title;
+        const std::string* rightTitle = items.at(right).title;
+        if (!leftTitle || !rightTitle) return false;
+        const std::size_t shared = std::min(leftTitle->size(), rightTitle->size());
+        for (std::size_t i = 0; i < shared; ++i) {
+            const auto leftChar = static_cast<unsigned char>(
+                std::tolower(static_cast<unsigned char>((*leftTitle)[i])));
+            const auto rightChar = static_cast<unsigned char>(
+                std::tolower(static_cast<unsigned char>((*rightTitle)[i])));
+            if (leftChar != rightChar) return leftChar < rightChar;
+        }
+        return leftTitle->size() < rightTitle->size();
+    });
+
+    std::size_t next = 0;
+    for (std::size_t index = 0;
+         index < projected.size() && next < applications.size(); ++index) {
+        if (!reserved[index]) projected[index] = applications[next++];
+    }
+    while (next < applications.size()) projected.push_back(applications[next++]);
+    return projected;
 }
 
 GridModel WiiUMenuApp::buildRootFolderModel() {
@@ -1582,84 +1686,16 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
     // Automatic views are only a projection of the personal layout. Folders
     // and widgets remain anchored (including every cell of a wide tile), while
     // applications fill the remaining cells in the requested order.
-    std::vector<std::uint64_t> projected;
-    if (m_config.sortMode != 0 && m_appLayoutMode == AppLayoutMode::Grid) {
-        const int columns = std::clamp(m_config.gridColumns, 1, 8);
-        projected.assign(m_layoutSlots.size(), 0);
-        std::vector<bool> reserved(m_layoutSlots.size(), false);
-
-        for (std::size_t index = 0; index < m_layoutSlots.size(); ++index) {
-            const auto stored = m_layoutSlots[index];
-            const auto found = entries.find(stored);
-            const bool movableApplication = found != entries.end() &&
-                found->second.isApplication() && found->second.widgetColumns == 1 &&
-                found->second.widgetRows == 1;
-            if (stored == 0 || found == entries.end() || movableApplication)
-                continue;
-            projected[index] = stored;
-            const int spanColumns = std::max(1, found->second.widgetColumns);
-            const int spanRows = std::max(1, found->second.widgetRows);
-            for (int dy = 0; dy < spanRows; ++dy) {
-                for (int dx = 0; dx < spanColumns; ++dx) {
-                    const std::size_t cell = index +
-                        static_cast<std::size_t>(dy * columns + dx);
-                    if (cell < reserved.size()) reserved[cell] = true;
-                }
-            }
-        }
-
-        std::unordered_map<std::uint64_t, int> personalRank;
-        int rank = 0;
-        for (const auto stored : m_layoutSlots) {
-            if (stored != 0 && !personalRank.count(stored))
-                personalRank.emplace(stored, rank++);
-        }
-        std::vector<std::uint64_t> applications;
-        applications.reserve(entries.size());
-        for (const auto& pair : entries) {
-            if (pair.second.isApplication() && pair.second.widgetColumns == 1 &&
-                pair.second.widgetRows == 1)
-                applications.push_back(pair.first);
-        }
-        std::sort(applications.begin(), applications.end(),
-                  [&](const auto left, const auto right) {
-            const auto leftIt = personalRank.find(left);
-            const auto rightIt = personalRank.find(right);
-            const int leftRank = leftIt == personalRank.end()
-                ? std::numeric_limits<int>::max() : leftIt->second;
-            const int rightRank = rightIt == personalRank.end()
-                ? std::numeric_limits<int>::max() : rightIt->second;
-            return leftRank != rightRank ? leftRank < rightRank : left < right;
-        });
-
-        const int mode = m_config.sortMode;
-        std::stable_sort(applications.begin(), applications.end(),
-                         [&](const auto left, const auto right) {
-            if (mode == 2) {
-                const auto leftOpened = m_config.lastOpenedAt(left);
-                const auto rightOpened = m_config.lastOpenedAt(right);
-                return leftOpened != rightOpened && leftOpened > rightOpened;
-            }
-            const auto& leftTitle = entries.at(left).title;
-            const auto& rightTitle = entries.at(right).title;
-            const std::size_t shared = std::min(leftTitle.size(), rightTitle.size());
-            for (std::size_t i = 0; i < shared; ++i) {
-                const auto leftChar = static_cast<unsigned char>(
-                    std::tolower(static_cast<unsigned char>(leftTitle[i])));
-                const auto rightChar = static_cast<unsigned char>(
-                    std::tolower(static_cast<unsigned char>(rightTitle[i])));
-                if (leftChar != rightChar) return leftChar < rightChar;
-            }
-            return leftTitle.size() < rightTitle.size();
-        });
-
-        std::size_t next = 0;
-        for (std::size_t index = 0;
-             index < projected.size() && next < applications.size(); ++index) {
-            if (!reserved[index]) projected[index] = applications[next++];
-        }
-        while (next < applications.size()) projected.push_back(applications[next++]);
+    std::unordered_map<std::uint64_t, SortableItem> sortable;
+    sortable.reserve(entries.size());
+    for (const auto& pair : entries) {
+        const AppEntry& entry = pair.second;
+        sortable.emplace(pair.first, SortableItem{
+            entry.isApplication() && entry.widgetColumns == 1 && entry.widgetRows == 1,
+            entry.widgetColumns, entry.widgetRows, &entry.title});
     }
+    const std::vector<std::uint64_t> projected =
+        projectSortedSlots(m_layoutSlots, sortable);
     const auto& displaySlots = projected.empty() ? m_layoutSlots : projected;
 
     const int columns = std::clamp(m_config.gridColumns, 1, 8);
@@ -3111,6 +3147,14 @@ std::string WiiUMenuApp::sortModeLabel() const {
     }
 }
 
+// True while the grid shows an automatic order rather than the personal one.
+// A slot index in that view is a cell of the projection, not the layout slot a
+// move would be written back to, so rearranging is held until "My order".
+bool WiiUMenuApp::sortProjectionActive() const {
+    return m_config.sortMode != 0 && m_appLayoutMode == AppLayoutMode::Grid &&
+           m_openFolderId == 0;
+}
+
 void WiiUMenuApp::cycleSortMode() {
     if (m_editMode || m_openFolderId != 0 ||
         m_appLayoutMode == AppLayoutMode::DynamicLine)
@@ -3119,6 +3163,33 @@ void WiiUMenuApp::cycleSortMode() {
     m_config.save();
     m_audio.playSfx(Sfx::Navigate);
     reflowHomeGrid();
+}
+
+// hbmenu runs inside the Album applet, which is what the sidebar's Album button
+// opens as well; the leave capture keeps the return-to-HOME splash intact.
+void WiiUMenuApp::launchHomebrewMenu() {
+    closeQuickSettings();
+#ifdef SWITCHU_MENU
+    m_audio.playSfx(Sfx::Activate);
+    scheduleLeaveCapture([this]() { m_launcher.launchAlbum(); });
+#endif
+}
+
+// The shortcut opens the user page of the first profile on the avatar bar. With
+// several accounts on the console the bar itself is how a different one is
+// picked; this is the one-press path to the account HOME shows first.
+void WiiUMenuApp::openCurrentUserPage() {
+    closeQuickSettings();
+#ifdef SWITCHU_MENU
+    for (const auto& avatar : m_userAvatarButtons) {
+        if (!avatar || avatar->addUserMode())
+            continue;
+        const AccountUid uid = avatar->uid();
+        m_audio.playSfx(Sfx::Activate);
+        scheduleLeaveCapture([this, uid]() { m_launcher.launchUserPage(uid); });
+        return;
+    }
+#endif
 }
 
 void WiiUMenuApp::promptNameFilter() {
@@ -5208,8 +5279,13 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
     if (m_quickSettings && m_quickSettings->isActive()) {
         add(dpadGlyph(), i18n.tr("hint.navigate", "Navigate"));
         add(buttonGlyph(nxui::Button::A), i18n.tr("hint.select", "Select"));
-        add(buttonGlyph(nxui::Button::B) + buttonGlyph(nxui::Button::L),
-            i18n.tr("hint.close", "Close"));
+        // L closes the drawer too, but it is already shown as the shortcut that
+        // opens it -- pairing it with B here only read as a two-button combo.
+        add(buttonGlyph(nxui::Button::B), i18n.tr("hint.close", "Close"));
+#ifdef SWITCHU_MENU
+        add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.homebrew", "hbmenu"));
+        add(buttonGlyph(nxui::Button::X), i18n.tr("hint.profile", "Profile"));
+#endif
         return hints;
     }
 
@@ -5317,11 +5393,11 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
             if (entry && entry->isFolder()) {
                 add(buttonGlyph(nxui::Button::A), i18n.tr("folder.open", "Open"));
                 add(buttonGlyph(nxui::Button::Plus), i18n.tr("hint.options", "Options"));
-                if (m_openFolderId == 0)
+                if (m_openFolderId == 0 && !sortProjectionActive())
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
             } else if (entry && entry->isWidget()) {
                 add(buttonGlyph(nxui::Button::Plus), i18n.tr("hint.options", "Options"));
-                if (m_openFolderId == 0)
+                if (m_openFolderId == 0 && !sortProjectionActive())
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
             } else {
 #ifdef SWITCHU_MENU
@@ -5340,7 +5416,7 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                     add(buttonGlyph(nxui::Button::R), sortModeLabel());
                 if (m_openFolderId != 0)
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move", "Move"));
-                else if (m_nameFilter.empty())
+                else if (m_nameFilter.empty() && !sortProjectionActive())
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
             }
         } else if (m_openFolderId == 0 && m_nameFilter.empty()) {

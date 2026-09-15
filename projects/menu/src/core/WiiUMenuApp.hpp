@@ -113,6 +113,19 @@ private:
     void appendAddUserButton();
     void wireUserAvatarNavigation();
     void composeRootPending(std::vector<PendingApp>& apps);
+    // One grid cell as the sort projection sees it: whether it may be shuffled
+    // around (an ordinary 1x1 application), how much room it takes, and the
+    // title A-Z compares. Kept free of AppEntry / PendingApp so both the
+    // startup composition and later reflows can share projectSortedSlots.
+    struct SortableItem {
+        bool movableApplication = false;
+        int  columns = 1;
+        int  rows = 1;
+        const std::string* title = nullptr;
+    };
+    std::vector<std::uint64_t> projectSortedSlots(
+        const std::vector<std::uint64_t>& slots,
+        const std::unordered_map<std::uint64_t, SortableItem>& items) const;
     GridModel buildRootFolderModel();
     GridModel buildOpenFolderModel(std::uint32_t folderId) const;
     void applyDisplayModel(GridModel model, std::uint64_t focusId, bool animate);
@@ -260,6 +273,8 @@ private:
     bool isCurrentFocusableWidget(nxui::Widget* w) const;
     std::string accessibilityPositionFor(nxui::Widget* w) const;
     void createSettings();
+    void launchHomebrewMenu();
+    void openCurrentUserPage();
     void createQuickSettings();
     void openQuickSettings();
     void closeQuickSettings();
@@ -307,6 +322,7 @@ private:
     void setAppLayoutMode(AppLayoutMode mode);
     void configureDynamicLineNavigation();
     void cycleSortMode();
+    bool sortProjectionActive() const;
     std::string sortModeLabel() const;
     // Name filter (X on the home screen): shows only games whose title contains
     // the text, ignoring case. Display-only; it never changes layout.json.

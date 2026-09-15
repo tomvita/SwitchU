@@ -601,6 +601,9 @@ void WiiUMenuApp::createQuickSettings() {
              }, true}}, 1, {});
         focusManager().setFocus(m_dialog.get());
     };
+    // L+Y and L+X: the drawer is what L opens, so its Y and X are the shortcuts.
+    callbacks.onHomebrewRequested = [this]() { launchHomebrewMenu(); };
+    callbacks.onProfileRequested = [this]() { openCurrentUserPage(); };
     callbacks.onClose = [this]() { closeQuickSettings(); };
     callbacks.onNavigateSfx = [this]() { m_audio.playSfx(Sfx::Navigate); };
     callbacks.onActivateSfx = [this]() { m_audio.playSfx(Sfx::Activate); };

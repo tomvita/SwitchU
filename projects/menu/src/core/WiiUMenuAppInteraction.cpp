@@ -402,6 +402,11 @@ void WiiUMenuApp::enterEditMode() {
     // A filtered view isn't the real layout, so nothing can be moved in it.
     if (!m_nameFilter.empty())
         return;
+    // Neither is an automatic sort view: it only projects the personal layout,
+    // so a move made there would be written back to an unrelated slot and
+    // scramble "My order". Press R back to My order to rearrange.
+    if (sortProjectionActive())
+        return;
     auto* cur = focusManager().current();
     if (!isEditableIcon(cur))
         return;
@@ -1167,6 +1172,7 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_gameOptions && m_gameOptions->isActive()) ||
             (m_folderOptions && m_folderOptions->isActive()) ||
             (m_controllerTest && m_controllerTest->isActive()) ||
+            (m_quickSettings && m_quickSettings->isActive()) ||
             (m_userSelect && m_userSelect->isActive())) {
             return;
         }
@@ -1210,6 +1216,9 @@ void WiiUMenuApp::wireGlobalActions() {
 #ifdef SWITCHU_MENU
     root.addAction(static_cast<uint64_t>(nxui::Button::X), [this]() {
         if (m_editMode) return;
+        // Actions bubble from the focused widget to the root, so the drawer's
+        // own X must not also open the name filter as it closes.
+        if (m_quickSettings && m_quickSettings->isActive()) return;
         auto* cur = focusManager().current();
         const bool onSuspendedGame = m_launcher.suspendedTitleId() != 0 && cur &&
             cur->tag() == "glossy_icon" &&
@@ -1271,7 +1280,7 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     game.icon = icon->texture();
     game.gameCard = icon->isGameCard();
     game.suspended = m_launcher.isAppSuspended(titleId);
-    game.canMove = m_openFolderId == 0;
+    game.canMove = m_openFolderId == 0 && !sortProjectionActive();
     game.canResize = m_openFolderId == 0;
     const auto currentSize = gameGridSize(titleId, AppLayoutMode::Grid);
     game.sizeIndex = currentSize == switchu::widgets::WidgetSize{2, 2}
