@@ -171,6 +171,9 @@ static constexpr const char* kAppCatalogBakPath = "sdmc:/config/SwitchU/applist.
 //   closed, so a crash cannot leave it behind.
 static constexpr const char* kBreezeHomeToggleFlag = "sdmc:/config/SwitchU/breeze_home_toggle";
 static constexpr const char* kBreezeRunningFlag    = "sdmc:/config/SwitchU/breeze_running";
+// Written by this fork's daemon at boot (and by Breeze after installing the
+// fork) so Breeze can tell the Home-toggle fork from upstream SwitchU.
+static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_toggle";
 
 static constexpr uint64_t kMenuTakeoverProgramId = 0x010000000000100DULL;
 static constexpr uint64_t kMenuProcessProgramId  = 0x010000000000FFFFULL;

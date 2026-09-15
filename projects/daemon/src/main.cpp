@@ -15,6 +15,7 @@
 #include "system_action_queue.hpp"
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 #include <atomic>
 #include <mutex>
 #include <vector>
@@ -2365,6 +2366,16 @@ int main(int argc, char* argv[]) {
         switchu::FileLog::log("[daemon] event manager failed: 0x%X (non-fatal)", rc);
 
     ::remove(smi::kBreezeRunningFlag);
+    {
+        mkdir("sdmc:/config", 0777);
+        mkdir("sdmc:/config/SwitchU", 0777);
+        if (FILE* marker = fopen(smi::kHomeToggleForkMarker, "wb")) {
+            fputs("home_toggle\n", marker);
+            fclose(marker);
+        } else {
+            switchu::FileLog::log("[daemon] fork marker write failed");
+        }
+    }
     switchu::FileLog::log("[daemon] launching menu...");
     rc = daemon::menu_la::launch(smi::MenuStartMode::StartupBoot, buildSystemStatus());
     if (R_FAILED(rc))
