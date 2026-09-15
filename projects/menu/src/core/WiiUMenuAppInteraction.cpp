@@ -399,6 +399,9 @@ void WiiUMenuApp::bindEditActions(GlossyIcon* icon) {
 }
 
 void WiiUMenuApp::enterEditMode() {
+    // A filtered view isn't the real layout, so nothing can be moved in it.
+    if (!m_nameFilter.empty())
+        return;
     auto* cur = focusManager().current();
     if (!isEditableIcon(cur))
         return;
@@ -1114,6 +1117,12 @@ void WiiUMenuApp::wireGlobalActions() {
             (m_controllerTest && m_controllerTest->isActive()) ||
             (m_userSelect && m_userSelect->isActive()))
             return;
+        if (m_openFolderId == 0 && !m_editMode && !m_nameFilter.empty() &&
+            m_navigator.route() == switchu::navigation::Route::Home &&
+            focusRoot() == &rootBox()) {
+            setNameFilter("");
+            return;
+        }
         if (m_openFolderId != 0 && !(m_dialog && m_dialog->isActive()))
             closeFolder();
     });
@@ -1201,11 +1210,18 @@ void WiiUMenuApp::wireGlobalActions() {
 #ifdef SWITCHU_MENU
     root.addAction(static_cast<uint64_t>(nxui::Button::X), [this]() {
         if (m_editMode) return;
-        if (m_launcher.suspendedTitleId() == 0) return;
         auto* cur = focusManager().current();
-        if (!cur || cur->tag() != "glossy_icon") return;
+        const bool onSuspendedGame = m_launcher.suspendedTitleId() != 0 && cur &&
+            cur->tag() == "glossy_icon" &&
+            m_launcher.isAppSuspended(static_cast<GlossyIcon*>(cur)->titleId());
+        if (!onSuspendedGame) {
+            // Everywhere else on the home screen, X filters the games by name.
+            if (m_navigator.route() == switchu::navigation::Route::Home &&
+                focusRoot() == &rootBox() && m_openFolderId == 0)
+                promptNameFilter();
+            return;
+        }
         auto* icon = static_cast<GlossyIcon*>(cur);
-        if (!m_launcher.isAppSuspended(icon->titleId())) return;
 
         m_audio.playSfx(Sfx::ModalShow);
         m_dialogReturnFocus = cur;

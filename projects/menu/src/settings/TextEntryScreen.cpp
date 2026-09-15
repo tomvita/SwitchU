@@ -7,7 +7,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+
+#include <switch.h>
 
 namespace {
 
@@ -33,6 +36,50 @@ int countCodepoints(const std::string& text) {
         ++count;
     }
     return count;
+}
+
+constexpr float kKeyRepeatDelay = 0.45f;
+constexpr float kKeyRepeatInterval = 0.05f;
+
+// What a key types on a US layout. The keyboard reports key positions, not the
+// user's layout, so other layouts type their US equivalents. Caps Lock only
+// affects letters, as on a PC.
+std::string keyboardText(int key, bool shift, bool capsLock) {
+    if (key >= HidKeyboardKey_A && key <= HidKeyboardKey_Z) {
+        const bool upper = shift != capsLock;
+        return std::string(1, static_cast<char>((upper ? 'A' : 'a') + (key - HidKeyboardKey_A)));
+    }
+    if (key >= HidKeyboardKey_D1 && key <= HidKeyboardKey_D0) {
+        static constexpr const char plain[] = "1234567890";
+        static constexpr const char shifted[] = "!@#$%^&*()";
+        const int index = key - HidKeyboardKey_D1;
+        return std::string(1, shift ? shifted[index] : plain[index]);
+    }
+    if (key >= HidKeyboardKey_NumPad1 && key <= HidKeyboardKey_NumPad0) {
+        static constexpr const char digits[] = "1234567890";
+        return std::string(1, digits[key - HidKeyboardKey_NumPad1]);
+    }
+    switch (key) {
+        case HidKeyboardKey_Space:          return " ";
+        case HidKeyboardKey_Minus:          return shift ? "_" : "-";
+        case HidKeyboardKey_Plus:           return shift ? "+" : "=";
+        case HidKeyboardKey_OpenBracket:    return shift ? "{" : "[";
+        case HidKeyboardKey_CloseBracket:   return shift ? "}" : "]";
+        case HidKeyboardKey_Pipe:
+        case HidKeyboardKey_Backslash:      return shift ? "|" : "\\";
+        case HidKeyboardKey_Semicolon:      return shift ? ":" : ";";
+        case HidKeyboardKey_Quote:          return shift ? "\"" : "'";
+        case HidKeyboardKey_Backquote:      return shift ? "~" : "`";
+        case HidKeyboardKey_Comma:          return shift ? "<" : ",";
+        case HidKeyboardKey_Period:         return shift ? ">" : ".";
+        case HidKeyboardKey_Slash:          return shift ? "?" : "/";
+        case HidKeyboardKey_NumPadDivide:   return "/";
+        case HidKeyboardKey_NumPadMultiply: return "*";
+        case HidKeyboardKey_NumPadSubtract: return "-";
+        case HidKeyboardKey_NumPadAdd:      return "+";
+        case HidKeyboardKey_NumPadDot:      return ".";
+        default:                            return {};
+    }
 }
 
 } // namespace
@@ -213,6 +260,22 @@ void TextEntryScreen::show(const Request& request) {
     m_caretTime = 0.f;
     m_touchRow = m_touchColumn = -1;
     m_waitingForTouchRelease = true;
+
+    // A USB keyboard types too. Keys already held when the screen opens are
+    // recorded so they don't type anything until pressed again.
+    static bool keyboardReady = false;
+    if (!keyboardReady) {
+        hidInitializeKeyboard();
+        keyboardReady = true;
+    }
+    HidKeyboardState keyboard{};
+    if (hidGetKeyboardStates(&keyboard, 1) != 0)
+        std::copy(std::begin(keyboard.keys), std::end(keyboard.keys), std::begin(m_prevKeyboardKeys));
+    else
+        std::fill(std::begin(m_prevKeyboardKeys), std::end(m_prevKeyboardKeys), 0);
+    m_heldKeyboardKey = -1;
+    m_keyboardRepeatTimer = 0.f;
+
     m_alpha.setImmediate(0.f);
     m_alpha.set(1.f, 0.18f, nxui::Easing::outCubic);
     m_backdropReady = false;
@@ -400,6 +463,67 @@ void TextEntryScreen::backspace() {
     if (m_keySfxCb) m_keySfxCb();
 }
 
+// Returns true when the key may auto-repeat while held.
+bool TextEntryScreen::typeKeyboardKey(int key, bool shift, bool capsLock) {
+    switch (key) {
+        case HidKeyboardKey_Return:
+        case HidKeyboardKey_NumPadEnter:
+            hide(true);
+            return false;
+        case HidKeyboardKey_Escape:
+            hide(false);
+            return false;
+        case HidKeyboardKey_Backspace:
+            backspace();
+            return true;
+        default:
+            break;
+    }
+    const std::string text = keyboardText(key, shift, capsLock);
+    if (text.empty())
+        return false;
+    appendText(text);
+    return true;
+}
+
+void TextEntryScreen::pollHardwareKeyboard(float dt) {
+    HidKeyboardState state{};
+    if (hidGetKeyboardStates(&state, 1) == 0)
+        return;
+    const bool shift = (state.modifiers & HidKeyboardModifier_Shift) != 0;
+    const bool capsLock = (state.modifiers & HidKeyboardModifier_CapsLock) != 0;
+    const auto isDown = [](const std::uint64_t* keys, int key) {
+        return (keys[key / 64] & (1ULL << (key & 63))) != 0;
+    };
+
+    bool typedThisFrame = false;
+    for (int key = HidKeyboardKey_A; key <= HidKeyboardKey_Backslash; ++key) {
+        if (!isDown(state.keys, key) || isDown(m_prevKeyboardKeys, key))
+            continue;
+        const bool repeatable = typeKeyboardKey(key, shift, capsLock);
+        typedThisFrame = true;
+        m_heldKeyboardKey = repeatable ? key : -1;
+        m_keyboardRepeatTimer = kKeyRepeatDelay;
+        if (!m_active || m_animatingOut)
+            break;
+    }
+
+    // Holding the last key typed repeats it, as on a PC.
+    if (!typedThisFrame && m_heldKeyboardKey >= 0 && m_active && !m_animatingOut) {
+        if (!isDown(state.keys, m_heldKeyboardKey)) {
+            m_heldKeyboardKey = -1;
+        } else {
+            m_keyboardRepeatTimer -= dt;
+            while (m_keyboardRepeatTimer <= 0.f && m_active && !m_animatingOut) {
+                typeKeyboardKey(m_heldKeyboardKey, shift, capsLock);
+                m_keyboardRepeatTimer += kKeyRepeatInterval;
+            }
+        }
+    }
+
+    std::copy(std::begin(state.keys), std::end(state.keys), std::begin(m_prevKeyboardKeys));
+}
+
 int TextEntryScreen::textLength() const {
     return countCodepoints(m_text);
 }
@@ -487,6 +611,8 @@ void TextEntryScreen::onUpdate(float dt) {
     m_alpha.update(dt);
     m_caretTime += dt;
     setOpacity(m_alpha.value());
+    if (m_active && !m_animatingOut)
+        pollHardwareKeyboard(dt);
     if (m_animatingOut && m_alpha.value() <= 0.01f) {
         m_active = false;
         m_animatingOut = false;

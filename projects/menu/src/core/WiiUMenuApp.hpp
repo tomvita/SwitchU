@@ -158,9 +158,11 @@ private:
                           std::uint64_t ignoringTitleId = 0,
                           std::uint64_t alsoIgnoringTitleId = 0) const;
 #ifdef SWITCHU_MENU
+    // replaceConfirmed: the user already agreed to close the suspended game.
     void activateApplication(GlossyIcon* source, AppEntry* entry,
                              std::uint64_t titleId,
-                             const std::string& launchTitle);
+                             const std::string& launchTitle,
+                             bool replaceConfirmed = false);
     void resumeSuspendedApplication(std::uint64_t titleId,
                                     const std::string& launchTitle);
 #endif
@@ -306,6 +308,11 @@ private:
     void configureDynamicLineNavigation();
     void cycleSortMode();
     std::string sortModeLabel() const;
+    // Name filter (X on the home screen): shows only games whose title contains
+    // the text, ignoring case. Display-only; it never changes layout.json.
+    void promptNameFilter();
+    void setNameFilter(std::string filter);
+    GridModel buildNameFilterModel(int perPage);
     AppLayoutMode appLayoutMode() const { return m_appLayoutMode; }
 
 #ifdef SWITCHU_MENU
@@ -501,6 +508,7 @@ private:
     int  m_refreshPrevPage       = 0;
 
     AppConfig m_config;
+    std::string m_nameFilter;   // empty = no filter
     SteamGridDbManager m_steamGridDb;
     std::future<SteamGridDbManager::BrowseResult> m_steamGridDbBrowseFuture;
     std::future<SteamGridDbManager::ApplyResult> m_steamGridDbApplyFuture;

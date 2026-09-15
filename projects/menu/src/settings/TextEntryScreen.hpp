@@ -6,6 +6,7 @@
 #include <nxui/core/Input.hpp>
 #include <nxui/Theme.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -82,6 +83,9 @@ private:
     std::string displayText() const;
     std::string keyLabel(const Key& key) const;
     int textLength() const;
+    // USB keyboard: newly pressed keys feed the same text path as on-screen keys.
+    void pollHardwareKeyboard(float dt);
+    bool typeKeyboardKey(int key, bool shift, bool capsLock);
 
     nxui::Font* m_font = nullptr;
     nxui::Font* m_smallFont = nullptr;
@@ -105,6 +109,9 @@ private:
     int m_touchRow = -1;
     int m_touchColumn = -1;
     bool m_waitingForTouchRelease = false;
+    std::uint64_t m_prevKeyboardKeys[4] = {};
+    int m_heldKeyboardKey = -1;          // last key typed, for auto-repeat
+    float m_keyboardRepeatTimer = 0.f;
 
     std::vector<std::vector<Key>> m_letters;
     std::vector<std::vector<Key>> m_symbols;

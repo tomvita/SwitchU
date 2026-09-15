@@ -1576,6 +1576,9 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
         m_layoutDirty = true;
     }
 
+    if (!m_nameFilter.empty())
+        return buildNameFilterModel(perPage);
+
     // Automatic views are only a projection of the personal layout. Folders
     // and widgets remain anchored (including every cell of a wide tile), while
     // applications fill the remaining cells in the requested order.
@@ -1723,6 +1726,80 @@ GridModel WiiUMenuApp::buildRootFolderModel() {
             model.addEntry({});
         }
     }
+    if (m_appLayoutMode == AppLayoutMode::DynamicLine)
+        return compactDynamicLineEntries(model);
+    return model;
+}
+
+// Every installed game whose title contains the filter, ignoring case, packed
+// from the first cell in the current sort order. Games inside folders are
+// included; folders and widgets are not.
+GridModel WiiUMenuApp::buildNameFilterModel(int perPage) {
+    const auto lowerAscii = [](std::string text) {
+        for (auto& ch : text)
+            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        return text;
+    };
+    const std::string needle = lowerAscii(m_nameFilter);
+
+    // My order: a game on the home screen ranks by its own slot; a game inside a
+    // folder ranks by the folder's slot, then by its place in the folder.
+    std::unordered_map<std::uint64_t, std::pair<int, int>> personalRank;
+    for (int slot = 0; slot < static_cast<int>(m_layoutSlots.size()); ++slot) {
+        const auto stored = m_layoutSlots[static_cast<std::size_t>(slot)];
+        if (stored != 0)
+            personalRank.emplace(stored, std::make_pair(slot, 0));
+    }
+    for (const auto& folder : m_folderStore.all()) {
+        const auto folderRank = personalRank.find(folderTitleId(folder.id));
+        const int base = folderRank == personalRank.end()
+            ? std::numeric_limits<int>::max() : folderRank->second.first;
+        for (int i = 0; i < static_cast<int>(folder.titleIds.size()); ++i) {
+            const auto titleId = folder.titleIds[static_cast<std::size_t>(i)];
+            if (titleId != 0)
+                personalRank.emplace(titleId, std::make_pair(base, i + 1));
+        }
+    }
+    const auto rankOf = [&personalRank](const AppEntry* app) {
+        const auto found = personalRank.find(app->titleId);
+        return found == personalRank.end()
+            ? std::make_pair(std::numeric_limits<int>::max(), 0) : found->second;
+    };
+
+    std::vector<const AppEntry*> matches;
+    for (const auto& app : m_allApps) {
+        if (app.titleId != 0 && app.isApplication() &&
+            lowerAscii(app.title).find(needle) != std::string::npos)
+            matches.push_back(&app);
+    }
+
+    const int mode = m_config.sortMode;
+    std::stable_sort(matches.begin(), matches.end(),
+                     [&](const AppEntry* left, const AppEntry* right) {
+        if (mode == 1) {
+            const auto leftTitle = lowerAscii(left->title);
+            const auto rightTitle = lowerAscii(right->title);
+            if (leftTitle != rightTitle)
+                return leftTitle < rightTitle;
+        } else if (mode == 2) {
+            const auto leftOpened = m_config.lastOpenedAt(left->titleId);
+            const auto rightOpened = m_config.lastOpenedAt(right->titleId);
+            if (leftOpened != rightOpened)
+                return leftOpened > rightOpened;
+        }
+        return rankOf(left) < rankOf(right);
+    });
+
+    GridModel model;
+    for (const auto* app : matches) {
+        AppEntry entry = *app;
+        entry.widgetColumns = 1;  // results pack one per cell
+        entry.widgetRows = 1;
+        model.addEntry(std::move(entry));
+    }
+    const int pages = std::max(1, (static_cast<int>(matches.size()) + perPage - 1) / perPage);
+    while (model.count() < pages * perPage)
+        model.addEntry({});
     if (m_appLayoutMode == AppLayoutMode::DynamicLine)
         return compactDynamicLineEntries(model);
     return model;
@@ -2804,7 +2881,8 @@ std::string WiiUMenuApp::randomScreenshotPath(std::uint32_t widgetId) const {
 }
 
 void WiiUMenuApp::showAddContextMenu(int targetSlot, const nxui::Rect& anchor) {
-    if (!m_contextMenu || m_openFolderId != 0) return;
+    // A filtered view's cells aren't layout slots, so nothing can be added there.
+    if (!m_contextMenu || m_openFolderId != 0 || !m_nameFilter.empty()) return;
     auto& i18n = nxui::I18n::instance();
     if (!m_contextMenu->isActive())
         m_contextMenuReturnFocus = focusManager().current();
@@ -3043,6 +3121,58 @@ void WiiUMenuApp::cycleSortMode() {
     reflowHomeGrid();
 }
 
+void WiiUMenuApp::promptNameFilter() {
+    if (m_editMode || m_openFolderId != 0)
+        return;
+    auto& i18n = nxui::I18n::instance();
+    requestTextEntry(
+        i18n.tr("filter.title", "Filter games"),
+        i18n.tr("filter.guide",
+                "Show games whose name contains this text. Leave it empty to show all games."),
+        m_nameFilter, 64, false,
+        [this](const std::string& value) { setNameFilter(value); });
+}
+
+void WiiUMenuApp::setNameFilter(std::string filter) {
+    const auto first = filter.find_first_not_of(" \t");
+    filter = first == std::string::npos
+        ? std::string()
+        : filter.substr(first, filter.find_last_not_of(" \t") - first + 1);
+    if (filter == m_nameFilter)
+        return;
+    m_nameFilter = std::move(filter);
+    if (!m_grid || m_allApps.empty() || m_openFolderId != 0)
+        return;
+
+    std::uint64_t previous = 0;
+    if (auto* current = m_grid->focusManager().current();
+        current && current->tag() == "glossy_icon")
+        previous = static_cast<GlossyIcon*>(current)->titleId();
+
+    GridModel model = buildRootFolderModel();
+    std::uint64_t focus = 0;
+    int matches = 0;
+    for (const auto& entry : model.entries()) {
+        if (entry.titleId == 0)
+            continue;
+        if (focus == 0 || entry.titleId == previous)
+            focus = entry.titleId;
+        if (entry.isApplication())
+            ++matches;
+    }
+    applyDisplayModel(std::move(model), focus, false);
+    if (m_layoutDirty) saveMenuLayout();
+
+    auto& i18n = nxui::I18n::instance();
+    if (m_nameFilter.empty())
+        m_accessibility.announce(i18n.tr("filter.cleared", "Showing all games"));
+    else if (matches == 0)
+        m_accessibility.announce(i18n.tr("filter.no_match", "No games match the filter"));
+    else
+        m_accessibility.announce(std::to_string(matches) + " " +
+                                 i18n.tr("filter.matches", "games match"));
+}
+
 void WiiUMenuApp::configureDynamicLineNavigation() {
     const bool dynamicLine = m_appLayoutMode == AppLayoutMode::DynamicLine;
     m_sidebar.setDynamicLineLayout(dynamicLine);
@@ -3204,7 +3334,8 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
 
 void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
                                       std::uint64_t titleId,
-                                      const std::string& launchTitle) {
+                                      const std::string& launchTitle,
+                                      bool replaceConfirmed) {
     if (!source || titleId == 0) return;
     if (m_launcher.isAppSuspended(titleId)) {
         resumeSuspendedApplication(titleId, launchTitle);
@@ -3228,6 +3359,67 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
             reason = i18n.tr("error.cannot_launch", "This game cannot be launched.");
         m_dialog->show(i18n.tr("error.title", "Cannot Launch"), reason,
                        {{i18n.tr("button.ok", "OK"), [this]() {}, true}}, 0, {});
+        focusManager().setFocus(m_dialog.get());
+        return;
+    }
+
+    // Starting a different game closes the suspended one, so ask first.
+    const std::uint64_t runningTitleId = m_launcher.suspendedTitleId();
+    if (!replaceConfirmed && m_launcher.isAppRunning() &&
+        runningTitleId != 0 && runningTitleId != titleId) {
+        auto& i18n = nxui::I18n::instance();
+        std::string runningTitle;
+        for (const auto& app : m_allApps) {
+            if (app.titleId == runningTitleId) {
+                runningTitle = app.title;
+                break;
+            }
+        }
+        if (runningTitle.empty())
+            runningTitle = i18n.tr("game.replace_running", "the running game");
+
+        m_audio.playSfx(Sfx::ModalShow);
+        m_dialogReturnFocus = source;
+        m_dialog->show(
+            i18n.tr("game.replace_title", "Close game?"),
+            i18n.tr("game.close_prefix", "Close") + std::string(" ") + runningTitle + " " +
+                i18n.tr("game.replace_middle", "and start") + " " + launchTitle +
+                i18n.tr("game.close_suffix", "?\nUnsaved progress will be lost."),
+            {
+                {i18n.tr("button.cancel", "Cancel"), [this]() {}, true},
+                {i18n.tr("game.replace_confirm", "Close and start"),
+                 [this, source, titleId, launchTitle]() {
+                     // The grid may have been rebuilt while the dialog was open,
+                     // so look the icon and entry up again instead of reusing them.
+                     GlossyIcon* icon = nullptr;
+                     if (m_grid) {
+                         for (const auto& candidate : m_grid->allIcons()) {
+                             if (candidate && &*candidate == source) {
+                                 icon = &*candidate;
+                                 break;
+                             }
+                         }
+                         if (!icon) {
+                             for (const auto& candidate : m_grid->allIcons()) {
+                                 if (candidate && candidate->titleId() == titleId) {
+                                     icon = &*candidate;
+                                     break;
+                                 }
+                             }
+                         }
+                     }
+                     if (!icon) {
+                         DebugLog::log("[launcher] replace launch skipped: no icon for tid=%016lX",
+                                       titleId);
+                         return;
+                     }
+                     const int index = findTitleIndex(titleId);
+                     AppEntry* current = index >= 0 ? &m_model.at(index) : nullptr;
+                     activateApplication(icon, current, titleId, launchTitle, true);
+                 }, true}
+            },
+            0,
+            {});
         focusManager().setFocus(m_dialog.get());
         return;
     }
@@ -5090,11 +5282,31 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
         return hints;
     }
 
-    if (m_openFolderId != 0)
+    if (m_openFolderId != 0) {
         add(buttonGlyph(nxui::Button::B), i18n.tr("hint.back", "Back"));
-    else
+    } else {
         add(buttonGlyph(nxui::Button::L),
             i18n.tr("quicksettings.hint_shortcut", "Quick Settings"));
+#ifdef SWITCHU_MENU
+        nxui::Widget* focused = focusManager().current();
+        const bool onSuspendedGame = focused && focused->tag() == "glossy_icon" &&
+            m_launcher.isAppSuspended(static_cast<GlossyIcon*>(focused)->titleId());
+        if (!onSuspendedGame) {
+            std::string shown = m_nameFilter;
+            if (shown.size() > 20) {
+                std::size_t cut = 20;
+                while (cut > 0 && (static_cast<unsigned char>(shown[cut]) & 0xC0) == 0x80)
+                    --cut;
+                shown = shown.substr(0, cut) + "...";
+            }
+            add(buttonGlyph(nxui::Button::X), m_nameFilter.empty()
+                ? i18n.tr("hint.filter", "Filter")
+                : i18n.tr("hint.filter_active", "Filter: ") + shown);
+        }
+#endif
+        if (!m_nameFilter.empty())
+            add(buttonGlyph(nxui::Button::B), i18n.tr("hint.clear_filter", "Clear filter"));
+    }
 
     nxui::Widget* cur = focusManager().current();
     if (cur && cur->tag() == "glossy_icon") {
@@ -5126,12 +5338,12 @@ std::vector<WiiUMenuApp::ActionHint> WiiUMenuApp::buildActionHints() {
                 if (m_openFolderId == 0 &&
                     m_appLayoutMode != AppLayoutMode::DynamicLine)
                     add(buttonGlyph(nxui::Button::R), sortModeLabel());
-                if (m_openFolderId == 0)
-                    add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
-                else
+                if (m_openFolderId != 0)
                     add(buttonGlyph(nxui::Button::Y), i18n.tr("folder.move", "Move"));
+                else if (m_nameFilter.empty())
+                    add(buttonGlyph(nxui::Button::Y), i18n.tr("hint.move", "Move"));
             }
-        } else if (m_openFolderId == 0) {
+        } else if (m_openFolderId == 0 && m_nameFilter.empty()) {
 #ifdef SWITCHU_MENU
             add(buttonGlyph(nxui::Button::Plus), i18n.tr("add.title", "Add"));
 #endif // in homebrew builds Plus quits the app, so no hint here

@@ -159,7 +159,17 @@
     "search": "Search",
     "sort_custom": "My order",
     "sort_alpha": "A-Z",
-    "sort_recent": "Recent"
+    "sort_recent": "Recent",
+    "filter": "Filter",
+    "filter_active": "Filter: ",
+    "clear_filter": "Clear filter"
+  },
+  "filter": {
+    "title": "Filter games",
+    "guide": "Show games whose name contains this text. Leave it empty to show all games.",
+    "cleared": "Showing all games",
+    "no_match": "No games match the filter",
+    "matches": "games match"
   },
   "settings": {
     "tabs": {
@@ -467,6 +477,10 @@
     "uninstall_progress": "Please wait. Do not turn off the console.",
     "close_title": "Close game",
     "close_prefix": "Close",
+    "replace_title": "Close game?",
+    "replace_middle": "and start",
+    "replace_confirm": "Close and start",
+    "replace_running": "the running game",
     "close_suffix": "?\nUnsaved progress will be lost.",
     "steamgriddb": {
       "hero": "Hero",
