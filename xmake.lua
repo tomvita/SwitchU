@@ -6,10 +6,12 @@ add_repositories("switch-repo https://github.com/PoloNX/switch-repo.git")
 includes("toolchain/*.lua")
 add_rules("mode.debug", "mode.release")
 
-local version = "1.2.0"
+-- tomvita's fork: version is the fork's GitHub release tag. SwitchU-Manager
+-- compares it with tomvita/SwitchU's latest tag, so bump it for every release.
+local version = "1.2.0b"
 local version_define = string.format('SWITCHU_VERSION="%s"', version)
 
-set_version(version)
+set_version("1.2.0")
 
 add_requires("libsdl", "libsdl_mixer", "libsdl_ttf", "zlib", "libwebp", "nlohmann_json", "fmt", "libcurl", "curlpp", {configs = {toolchains = "devkita64"}})
 if get_config("backend") ~= "sdl2" then

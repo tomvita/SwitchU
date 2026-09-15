@@ -18,7 +18,9 @@ SettingsScreen::Tab settings::tabs::AboutTab::build(SettingsScreen& /* screen */
         SettingItem it;
         it.label = i18n.tr("settings.about.version", "Version");
         it.type  = ItemType::Info;
-        it.infoText = "SwitchU " SWITCHU_VERSION;
+        // SWITCHU_VERSION is the fork's release tag (xmake.lua); the label text
+        // stays out of the -D define, whose quoting can't carry the apostrophe.
+        it.infoText = std::string("SwitchU ") + SWITCHU_VERSION + " tomvita's fork";
         t.items.push_back(std::move(it));
     }
 

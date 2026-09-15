@@ -22,8 +22,10 @@
 namespace switchu::manager {
 namespace {
 
+// tomvita's fork: update from the fork's releases, so updating never reinstalls
+// upstream SwitchU over the Breeze Home toggle.
 constexpr const char* kLatestReleaseUrl =
-    "https://api.github.com/repos/PoloNX/SwitchU/releases/latest";
+    "https://api.github.com/repos/tomvita/SwitchU/releases/latest";
 constexpr const char* kWorkRoot = "sdmc:/config/SwitchU/update";
 constexpr const char* kArchivePath = "sdmc:/config/SwitchU/update/SwitchU-update.zip";
 constexpr const char* kArchivePartPath = "sdmc:/config/SwitchU/update/SwitchU-update.zip.part";
@@ -68,13 +70,32 @@ std::vector<int> versionParts(std::string version) {
     return parts;
 }
 
+// Letters after the last number, lowercased: "1.2.0b" -> "b". The fork tags
+// its releases 1.2.0a, 1.2.0b, ... on top of upstream's number.
+std::string versionSuffix(const std::string& version) {
+    std::size_t end = version.size();
+    std::size_t begin = end;
+    while (begin > 0 && std::isalpha(static_cast<unsigned char>(version[begin - 1])))
+        --begin;
+    if (begin == 0 || !std::isdigit(static_cast<unsigned char>(version[begin - 1])))
+        return {};
+    return lower(version.substr(begin, end - begin));
+}
+
 bool isNewerVersion(const std::string& candidate, const std::string& current) {
     auto a = versionParts(candidate);
     auto b = versionParts(current);
     const std::size_t count = std::max(a.size(), b.size());
     a.resize(count, 0);
     b.resize(count, 0);
-    return std::lexicographical_compare(b.begin(), b.end(), a.begin(), a.end());
+    if (a != b)
+        return std::lexicographical_compare(b.begin(), b.end(), a.begin(), a.end());
+    // Same numbers: no suffix < "a" < "b" < ... < "z" < "aa".
+    const std::string sa = versionSuffix(candidate);
+    const std::string sb = versionSuffix(current);
+    if (sa.size() != sb.size())
+        return sa.size() > sb.size();
+    return sa > sb;
 }
 
 void shutdownNetworkLocked() {
