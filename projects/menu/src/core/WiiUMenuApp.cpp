@@ -4446,8 +4446,18 @@ void WiiUMenuApp::refreshAppList() {
         return;
     }
 
-    if (m_launchAnim && m_launchAnim->isPlaying()) m_launchAnim->stop();
-    if (m_userSelect && m_userSelect->isActive()) m_userSelect->hide();
+    // A launch is committed by the animation's completion callback, and picking
+    // an account is the same kind of half-finished flow. Cancelling either one
+    // here made a game impossible to start during a catalogue rebuild, which
+    // pushes a refresh every few hundred milliseconds -- shorter than the
+    // animation, so every attempt was cut off. The refresh can wait.
+    if ((m_launchAnim && m_launchAnim->isPlaying())
+        || (m_userSelect && m_userSelect->isActive())) {
+        if (!m_refreshQueued)
+            DebugLog::log("[refresh] deferred: a launch is in flight");
+        m_refreshQueued = true;
+        return;
+    }
 
     m_refreshPrevPage = m_grid ? m_grid->currentPage() : 0;
     m_asyncRefreshPending = true;
@@ -5062,7 +5072,9 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_deferredRefreshFrames > 0)
         --m_deferredRefreshFrames;
     if (m_refreshQueued && m_deferredRefreshFrames == 0 &&
-        !m_asyncRefreshPending && m_refreshCooldownFrames == 0) {
+        !m_asyncRefreshPending && m_refreshCooldownFrames == 0 &&
+        !(m_launchAnim && m_launchAnim->isPlaying()) &&
+        !(m_userSelect && m_userSelect->isActive())) {
         DebugLog::log("[update] deferred refresh triggered, starting refreshAppList");
         refreshAppList();
     }
