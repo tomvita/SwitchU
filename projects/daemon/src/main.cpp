@@ -375,7 +375,7 @@ static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplica
     bool queued = false;
     std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
     for (const auto& record : records) {
-        if (record.id == 0 || switchu::control_cache::hasMeta(record.id))
+        if (record.id == 0 || switchu::control_cache::hasUsableCache(record.id))
             continue;
         if (std::find(g_controlCacheQueue.begin(), g_controlCacheQueue.end(), record.id) ==
             g_controlCacheQueue.end()) {
@@ -2278,7 +2278,7 @@ static void controlCacheThreadFunc(void* arg) {
             continue;
         }
 
-        if (titleId == 0 || switchu::control_cache::hasMeta(titleId))
+        if (titleId == 0 || switchu::control_cache::hasUsableCache(titleId))
             continue;
 
         auto* controlData = new NsApplicationControlData();

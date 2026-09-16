@@ -171,6 +171,22 @@ inline bool hasMeta(uint64_t titleId) {
     return readMeta(titleId, meta);
 }
 
+// Whether a title can be served from the cache. An icon file that exists but is
+// empty is a failed write, and without this the title would stay cached with a
+// grey placeholder forever -- hasMeta() alone cannot tell. A title with no icon
+// file at all is not broken: its control data carries no icon, so there is
+// nothing to write and nothing to retry.
+inline bool hasUsableCache(uint64_t titleId) {
+    if (!hasMeta(titleId))
+        return false;
+
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(iconPath(titleId), ec);
+    if (ec)
+        return true;  // no icon file: nothing was ever written for this title
+    return size > 0;
+}
+
 inline std::vector<uint8_t> readIcon(uint64_t titleId) {
     std::vector<uint8_t> data;
     std::ifstream file(iconPath(titleId), std::ios::binary | std::ios::ate);
@@ -198,7 +214,15 @@ inline bool writeIcon(uint64_t titleId, const uint8_t* data, size_t size) {
         return false;
 
     file.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
-    return static_cast<bool>(file);
+    file.close();
+    if (static_cast<bool>(file))
+        return true;
+
+    // A half-written icon is worse than none: the menu reads it as empty and
+    // shows a placeholder forever. Leave nothing behind for the retry.
+    std::error_code ec;
+    std::filesystem::remove(iconPath(titleId), ec);
+    return false;
 }
 
 inline void copyString(char* dst, size_t dstSize, const char* src, size_t srcSize) {
@@ -363,6 +387,7 @@ inline bool writeMeta(const Meta& meta) {
         return false;
 
     file.write(reinterpret_cast<const char*>(&meta), sizeof(meta));
+    file.close();
     return static_cast<bool>(file);
 }
 
@@ -372,13 +397,16 @@ inline bool writeFromControlData(uint64_t titleId, const NsApplicationControlDat
     if (!fillMetaFromControlData(titleId, controlData, meta))
         return false;
 
-    const bool metaOk = writeMeta(meta);
-    bool iconOk = true;
+    // The icon goes first. The meta is what marks a title cached, so writing it
+    // before a failed icon write is what left a title stranded with an empty
+    // icon that nothing ever retried.
     if (controlSize > sizeof(NacpStruct)) {
         const size_t iconSize = controlSize - sizeof(NacpStruct);
-        iconOk = writeIcon(titleId, controlData.icon, iconSize);
+        if (!writeIcon(titleId, controlData.icon, iconSize))
+            return false;
     }
-    return metaOk && iconOk;
+
+    return writeMeta(meta);
 }
 
 }
