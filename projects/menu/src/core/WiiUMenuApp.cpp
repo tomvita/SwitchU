@@ -4502,6 +4502,20 @@ void WiiUMenuApp::finalizeRefresh() {
     // ldr x1,[x1,#40]; blr x1 inside changeFocusTo.
     //
     // invalidateWidget was written for this and had no callers.
+    // Where the cursor is, so the refresh can leave it there. A refresh happens
+    // on its own schedule -- a title finishing its metadata rebuild, a game
+    // installing -- and it replaces the grid icons and nothing else, so only a
+    // cursor that was on an icon has any reason to move. One that was on the
+    // sidebar or a profile stays put: those widgets survive the rebuild.
+    std::uint64_t refocusTitleId = 0;
+    nxui::Widget* focusOutsideGrid = nullptr;
+    if (auto* focusedBeforeRefresh = focusManager().current()) {
+        if (focusedBeforeRefresh->tag() == "glossy_icon")
+            refocusTitleId = static_cast<GlossyIcon*>(focusedBeforeRefresh)->titleId();
+        else
+            focusOutsideGrid = focusedBeforeRefresh;
+    }
+
     for (const auto& icon : m_grid->allIcons()) {
         focusManager().invalidateWidget(icon.get());
         m_grid->focusManager().invalidateWidget(icon.get());
@@ -4564,9 +4578,26 @@ void WiiUMenuApp::finalizeRefresh() {
     // until their background decode completes.
     for (auto& icon : m_grid->allIcons())
         icon->forceVisible();
-    // If the rebuilt grid has nothing focusable, the app focus manager must be
-    // left holding nothing rather than whatever it held before.
-    focusManager().setFocus(m_grid->focusManager().current());
+    // Put the cursor back before the focus manager is told about the new grid,
+    // so the only focus change the player hears is the one they made.
+    bool focusRestored = false;
+    if (refocusTitleId != 0 && findTitleIndex(refocusTitleId) >= 0) {
+        m_suppressNextNavigateSfx = true;
+        focusRestored = focusTitle(refocusTitleId);
+    } else if (focusOutsideGrid && isCurrentFocusableWidget(focusOutsideGrid)) {
+        // The cursor was off the grid and its widget survived the rebuild, so
+        // the refresh has no business dragging it back onto an icon.
+        m_suppressNextNavigateSfx = true;
+        focusManager().setFocus(focusOutsideGrid);
+        focusRestored = true;
+    }
+
+    if (!focusRestored) {
+        // If the rebuilt grid has nothing focusable, the app focus manager must
+        // be left holding nothing rather than whatever it held before.
+        m_suppressNextNavigateSfx = false;
+        focusManager().setFocus(m_grid->focusManager().current());
+    }
 
     // Keep a short cooldown to coalesce duplicate app-record notifications.
     m_refreshCooldownFrames = 20;
