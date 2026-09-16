@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ctime>
+#include <memory>
 #include <unordered_set>
 #include <nxui/core/I18n.hpp>
 
@@ -1266,9 +1267,37 @@ void WiiUMenuApp::showGameContextMenu(GlossyIcon* icon) {
     auto& i18n = nxui::I18n::instance();
     switchu::control_cache::Meta meta{};
     const bool hasMeta = switchu::control_cache::readMeta(titleId, meta);
-    const std::string version = hasMeta && meta.display_version[0] != '\0'
-        ? std::string(meta.display_version)
-        : i18n.tr("game.version_unknown", "Unknown");
+
+    // The cached meta is written once, the first time a title is seen, so its
+    // display version is whatever was installed back then: an update leaves it
+    // showing the old number. Read this one game's version from the content
+    // that is installed now, and keep the cache as the fallback.
+    std::string version;
+#ifdef SWITCHU_MENU
+    {
+        auto controlData = std::make_unique<NsApplicationControlData>();
+        u64 controlSize = 0;
+        const Result rc = nsGetApplicationControlData(
+            NsApplicationControlSource_Storage, titleId, controlData.get(),
+            sizeof(*controlData), &controlSize);
+        if (R_SUCCEEDED(rc) && controlSize >= sizeof(NacpStruct)) {
+            char text[sizeof(controlData->nacp.display_version) + 1] = {};
+            switchu::control_cache::copyString(
+                text, sizeof(text), controlData->nacp.display_version,
+                sizeof(controlData->nacp.display_version));
+            version = text;
+        } else {
+            DebugLog::log("[game-options] control data 0x%016lX rc=0x%X size=%lu",
+                          static_cast<unsigned long>(titleId), rc,
+                          static_cast<unsigned long>(controlSize));
+        }
+    }
+#endif
+    if (version.empty()) {
+        version = hasMeta && meta.display_version[0] != '\0'
+            ? std::string(meta.display_version)
+            : i18n.tr("game.version_unknown", "Unknown");
+    }
 
     GameOptionsScreen::GameInfo game;
     game.titleId = titleId;
