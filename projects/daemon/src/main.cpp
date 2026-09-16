@@ -240,7 +240,16 @@ static constexpr const char* kAppCatalogPath = "sdmc:/config/SwitchU/applist.bin
 static constexpr const char* kAppCatalogTmpPath = "sdmc:/config/SwitchU/applist.tmp";
 static constexpr const char* kAppCatalogBackupPath = "sdmc:/config/SwitchU/applist.bak";
 static std::mutex g_controlCacheQueueMutex;
-static std::vector<uint64_t> g_controlCacheQueue;
+// A title that fails to cache goes back on the queue rather than waiting for the
+// next boot: the failures seen in practice are transient SD write errors during
+// a large rebuild. The attempt count is what stops a title that always fails
+// from cycling forever.
+struct QueuedControlCacheTitle {
+    uint64_t titleId = 0;
+    int      attempts = 0;
+};
+static std::vector<QueuedControlCacheTitle> g_controlCacheQueue;
+static constexpr int kControlCacheMaxAttempts = 3;
 static std::atomic<bool> g_controlCacheRefreshPending{false};
 static std::atomic<uint64_t> g_controlCacheHoldStartTick{0};
 static constexpr uint64_t kControlCacheCoalesceNs = 600'000'000ULL;
@@ -377,9 +386,13 @@ static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplica
     for (const auto& record : records) {
         if (record.id == 0 || switchu::control_cache::hasUsableCache(record.id))
             continue;
-        if (std::find(g_controlCacheQueue.begin(), g_controlCacheQueue.end(), record.id) ==
-            g_controlCacheQueue.end()) {
-            g_controlCacheQueue.push_back(record.id);
+        const auto found = std::find_if(
+            g_controlCacheQueue.begin(), g_controlCacheQueue.end(),
+            [&record](const QueuedControlCacheTitle& entry) {
+                return entry.titleId == record.id;
+            });
+        if (found == g_controlCacheQueue.end()) {
+            g_controlCacheQueue.push_back({record.id, 0});
             queued = true;
         }
     }
@@ -387,14 +400,32 @@ static void enqueueControlCacheRecords(const std::vector<switchu::ns::ExtApplica
         ueventSignal(&g_controlCacheWakeEvent);
 }
 
-static bool popControlCacheTitle(uint64_t& outTitleId) {
+static bool popControlCacheTitle(uint64_t& outTitleId, int& outAttempts) {
     std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
     if (g_controlCacheQueue.empty())
         return false;
 
-    outTitleId = g_controlCacheQueue.front();
+    outTitleId = g_controlCacheQueue.front().titleId;
+    outAttempts = g_controlCacheQueue.front().attempts;
     g_controlCacheQueue.erase(g_controlCacheQueue.begin());
     return true;
+}
+
+// Requeued at the back, so every other title gets its turn first and a retry
+// never spins on the same failing read.
+static void requeueControlCacheTitle(uint64_t titleId, int attempts) {
+    if (attempts + 1 >= kControlCacheMaxAttempts) {
+        switchu::FileLog::log("[control-cache] giving up on 0x%016lX after %d attempts",
+                              titleId, attempts + 1);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_controlCacheQueueMutex);
+        g_controlCacheQueue.push_back({titleId, attempts + 1});
+    }
+    switchu::FileLog::log("[control-cache] requeued 0x%016lX attempt %d",
+                          titleId, attempts + 2);
+    ueventSignal(&g_controlCacheWakeEvent);
 }
 
 static bool writeAppCatalogFile() {
@@ -2273,7 +2304,8 @@ static void controlCacheThreadFunc(void* arg) {
         }
 
         uint64_t titleId = 0;
-        if (!popControlCacheTitle(titleId)) {
+        int attempts = 0;
+        if (!popControlCacheTitle(titleId, attempts)) {
             waitSingle(waiterForUEvent(&g_controlCacheWakeEvent), UINT64_MAX);
             continue;
         }
@@ -2339,6 +2371,8 @@ static void controlCacheThreadFunc(void* arg) {
                 if (!g_controlCacheRefreshPending.exchange(true))
                     g_controlCacheHoldStartTick.store(armGetSystemTick());
                 ueventSignal(&g_mainWakeEvent);
+            } else {
+                requeueControlCacheTitle(titleId, attempts);
             }
         } else {
             switchu::FileLog::log("[control-cache] GetControlData FAIL title=0x%016lX rc=0x%X size=%zu elapsed=%lums",
@@ -2346,6 +2380,7 @@ static void controlCacheThreadFunc(void* arg) {
                                   rc,
                                   controlSize,
                                   static_cast<unsigned long>(elapsedMs));
+            requeueControlCacheTitle(titleId, attempts);
         }
 
         delete controlData;
