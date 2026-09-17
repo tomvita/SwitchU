@@ -30,6 +30,9 @@ struct LibraryAppletRequest {
     // once instead of waiting for it to exit. An applet held in the background
     // can't answer an exit request, so waiting only delays the caller.
     bool (*terminateOnExit)() = nullptr;
+    // Points at the running applet's holder between start and join, so the
+    // pump can exchange interactive storages with it; null otherwise.
+    AppletHolder** activeHolder = nullptr;
 };
 
 using LibraryAppletPump = void (*)();

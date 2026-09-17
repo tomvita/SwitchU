@@ -171,9 +171,39 @@ static constexpr const char* kAppCatalogBakPath = "sdmc:/config/SwitchU/applist.
 //   closed, so a crash cannot leave it behind.
 static constexpr const char* kBreezeHomeToggleFlag = "sdmc:/config/SwitchU/breeze_home_toggle";
 static constexpr const char* kBreezeRunningFlag    = "sdmc:/config/SwitchU/breeze_running";
+// Written by Breeze's SwitchU button just before it exits to hbmenu: the next
+// HOME closes the applet and opens the SwitchU menu, whatever the toggle says.
+// Removed on use and whenever a Breeze applet starts or closes.
+static constexpr const char* kBreezeOpenMenuFlag   = "sdmc:/config/SwitchU/breeze_open_switchu";
 // Written by this fork's daemon at boot (and by Breeze after installing the
 // fork) so Breeze can tell the Home-toggle fork from upstream SwitchU.
 static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_toggle";
+
+// Breeze overlay (fork-only). kBreezeHomeToggleFlag = "overlay" keeps Breeze
+// alive behind the running game; HOME then shows and hides Breeze on its own
+// display layer over the live game instead of switching the foreground.
+// Breeze writes kBreezeOverlayCapability into kBreezeRunningFlag when it
+// understands BreezeOverlayMessage, exchanged as 16-byte storages over the
+// library applet's interactive in/out channel. Every command is answered with
+// Ack (arg = the command).
+static constexpr const char* kBreezeOverlayCapability = "overlay1";
+static constexpr uint32_t kBreezeOverlayMagic = 0x564F5A42; // "BZOV"
+
+enum class BreezeOverlayCommand : uint32_t {
+    EnterHidden = 1,        // stop drawing to the applet window; the game is about to run
+    Show = 2,               // draw over the game and take its input
+    Hide = 3,               // give input back and clear the overlay
+    EnterNormal = 4,        // Breeze is about to get the foreground back
+    Ack = 0x81,             // Breeze -> daemon
+    RequestForeground = 0x82, // Breeze -> daemon: exiting, bring the applet to the front
+};
+
+struct BreezeOverlayMessage {
+    uint32_t magic = kBreezeOverlayMagic;
+    uint32_t command = 0;
+    uint32_t arg = 0;
+    uint32_t reserved = 0;
+};
 
 static constexpr uint64_t kMenuTakeoverProgramId = 0x010000000000100DULL;
 static constexpr uint64_t kMenuProcessProgramId  = 0x010000000000FFFFULL;

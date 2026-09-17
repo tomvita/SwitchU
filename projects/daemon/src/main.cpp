@@ -13,6 +13,7 @@
 #include "library_applet_runner.hpp"
 #include "menu_launcher.hpp"
 #include "system_action_queue.hpp"
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
@@ -263,7 +264,7 @@ static const char* g_pendingHomeMenuSource = nullptr;
 static uint64_t g_pendingHomeMenuStartedAt = 0;
 
 // Breeze Home toggle (fork-only): see smi::kBreezeHomeToggleFlag.
-enum class BreezeToggleMode : uint8_t { Off, Keep, Restart };
+enum class BreezeToggleMode : uint8_t { Off, Keep, Restart, Overlay };
 static bool g_breezeCandidate = false;       // Album / User Page applet that may be Breeze
 static bool g_breezeSession = false;         // that applet announced itself as Breeze
 static bool g_breezeViaUserPage = false;     // started through the profile takeover
@@ -274,6 +275,14 @@ static bool g_breezeCloseForGame = false;    // held Breeze closing so the game 
 static bool g_breezeCloseForSleep = false;   // held Breeze closing before the console sleeps
 static bool g_breezeRelaunchPending = false; // next HOME from the game reopens Breeze
 static uint64_t g_breezePollTick = 0;
+
+// Breeze overlay (see smi::BreezeOverlayCommand): the game keeps the foreground
+// and Breeze draws over it on its own layer.
+enum class BreezeOverlayState : uint8_t { None, Hidden, Shown };
+static BreezeOverlayState g_breezeOverlay = BreezeOverlayState::None;
+static bool g_breezeOverlayCapable = false;         // breeze_running holds the capability
+static bool g_breezeOverlayForegroundRequested = false;
+static AppletHolder* g_breezeHolder = nullptr;       // set by the runner while the applet runs
 
 static uint8_t g_lastBatteryPercent = 0xFF;
 static PsmChargerType g_lastChargerType = (PsmChargerType)0xFF;
@@ -870,6 +879,8 @@ static BreezeToggleMode readBreezeToggleMode() {
         return BreezeToggleMode::Restart;
     if (std::strncmp(value, "keep", 4) == 0)
         return BreezeToggleMode::Keep;
+    if (std::strncmp(value, "overlay", 7) == 0)
+        return BreezeToggleMode::Overlay;
     return BreezeToggleMode::Off;
 }
 
@@ -880,11 +891,143 @@ static BreezeToggleMode effectiveBreezeMode() {
     const BreezeToggleMode mode = readBreezeToggleMode();
     if (mode == BreezeToggleMode::Restart && !g_breezeViaUserPage)
         return BreezeToggleMode::Keep;
+    // An older Breeze can't draw an overlay; hold it behind the game instead.
+    if (mode == BreezeToggleMode::Overlay && !g_breezeOverlayCapable)
+        return BreezeToggleMode::Keep;
     return mode;
+}
+
+static void breezeOverlayTrace(const char* fmt, ...) {
+    char line[256];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    switchu::FileLog::log("[breeze] %s", line);
+}
+
+static bool readBreezeOverlayCapability() {
+    FILE* file = fopen(smi::kBreezeRunningFlag, "rb");
+    if (!file)
+        return false;
+    char value[16] = {};
+    fread(value, 1, sizeof(value) - 1, file);
+    fclose(file);
+    return std::strncmp(value, smi::kBreezeOverlayCapability,
+                        std::strlen(smi::kBreezeOverlayCapability)) == 0;
+}
+
+static const char* breezeOverlayCommandName(smi::BreezeOverlayCommand command) {
+    switch (command) {
+        case smi::BreezeOverlayCommand::EnterHidden: return "EnterHidden";
+        case smi::BreezeOverlayCommand::Show: return "Show";
+        case smi::BreezeOverlayCommand::Hide: return "Hide";
+        case smi::BreezeOverlayCommand::EnterNormal: return "EnterNormal";
+        case smi::BreezeOverlayCommand::Ack: return "Ack";
+        case smi::BreezeOverlayCommand::RequestForeground: return "RequestForeground";
+    }
+    return "?";
+}
+
+// Pops everything Breeze sent. Returns true if it included the Ack for `awaited`.
+static bool drainBreezeOverlayMessages(smi::BreezeOverlayCommand awaited) {
+    bool acked = false;
+    AppletStorage storage{};
+    while (g_breezeHolder && R_SUCCEEDED(appletHolderPopInteractiveOutData(g_breezeHolder, &storage))) {
+        smi::BreezeOverlayMessage message{};
+        message.magic = 0;
+        const Result readRc = appletStorageRead(&storage, 0, &message, sizeof(message));
+        appletStorageClose(&storage);
+        if (R_FAILED(readRc) || message.magic != smi::kBreezeOverlayMagic)
+            continue;
+        const auto command = static_cast<smi::BreezeOverlayCommand>(message.command);
+        if (command == smi::BreezeOverlayCommand::Ack) {
+            if (message.arg == static_cast<uint32_t>(awaited))
+                acked = true;
+        } else if (command == smi::BreezeOverlayCommand::RequestForeground) {
+            g_breezeOverlayForegroundRequested = true;
+        }
+    }
+    return acked;
+}
+
+// Sends one command and waits for Breeze's Ack.
+static bool sendBreezeOverlay(smi::BreezeOverlayCommand command, uint64_t timeoutMs) {
+    if (!g_breezeHolder) {
+        breezeOverlayTrace("overlay %s: no applet holder", breezeOverlayCommandName(command));
+        return false;
+    }
+    smi::BreezeOverlayMessage message{};
+    message.command = static_cast<uint32_t>(command);
+    AppletStorage storage{};
+    Result rc = appletCreateStorage(&storage, sizeof(message));
+    if (R_SUCCEEDED(rc)) {
+        rc = appletStorageWrite(&storage, 0, &message, sizeof(message));
+        if (R_SUCCEEDED(rc))
+            rc = appletHolderPushInteractiveInData(g_breezeHolder, &storage);
+        appletStorageClose(&storage);
+    }
+    if (R_FAILED(rc)) {
+        breezeOverlayTrace("overlay %s push FAIL: 0x%X holder=%d",
+                           breezeOverlayCommandName(command), rc, g_breezeHolder ? 1 : 0);
+        return false;
+    }
+
+    const uint64_t startedAt = armGetSystemTick();
+    for (;;) {
+        const uint64_t elapsedMs = armTicksToNs(armGetSystemTick() - startedAt) / 1'000'000ULL;
+        if (drainBreezeOverlayMessages(command)) {
+            breezeOverlayTrace("overlay %s acked after %lums",
+                               breezeOverlayCommandName(command),
+                               static_cast<unsigned long>(elapsedMs));
+            return true;
+        }
+        if (elapsedMs >= timeoutMs)
+            break;
+        svcSleepThread(10'000'000ULL);
+    }
+    breezeOverlayTrace("overlay %s: no ack within %lums",
+                       breezeOverlayCommandName(command), static_cast<unsigned long>(timeoutMs));
+    return false;
+}
+
+// hid:sys EnableAppletToGetInput for every applet and the game. Breeze gives
+// input back itself on Hide; this covers a Breeze closed while its overlay held
+// the controller (crash or terminate), which would leave the game without input.
+static void restoreInputAfterBreezeOverlay() {
+    Service hidsys{};
+    Result rc = smGetService(&hidsys, "hid:sys");
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[breeze] overlay input restore: hid:sys FAIL 0x%X", rc);
+        return;
+    }
+    const auto enable = [&hidsys](u64 aruid) {
+        const struct {
+            u8 permit;
+            u64 aruid;
+        } in = {1, aruid};
+        return serviceDispatchIn(&hidsys, 503, in);
+    };
+    if (R_SUCCEEDED(pmdmntInitialize())) {
+        for (u64 programId = 0x0100000000001000ULL; programId < 0x0100000000001020ULL; ++programId) {
+            u64 pid = 0;
+            if (R_SUCCEEDED(pmdmntGetProcessId(&pid, programId)) && pid != 0)
+                enable(pid);
+        }
+        u64 appPid = 0;
+        if (R_SUCCEEDED(pmdmntGetApplicationProcessId(&appPid)) && appPid != 0) {
+            rc = enable(appPid);
+            switchu::FileLog::log("[breeze] overlay input restored for game pid=%lu rc=0x%X",
+                                  static_cast<unsigned long>(appPid), rc);
+        }
+        pmdmntExit();
+    }
+    serviceClose(&hidsys);
 }
 
 static void beginBreezeCandidate(bool viaUserPage, AccountUid uid) {
     ::remove(smi::kBreezeRunningFlag);
+    ::remove(smi::kBreezeOpenMenuFlag);
     g_breezeCandidate = true;
     g_breezeSession = false;
     g_breezeViaUserPage = viaUserPage;
@@ -895,6 +1038,9 @@ static void beginBreezeCandidate(bool viaUserPage, AccountUid uid) {
     g_breezeCloseForSleep = false;
     g_breezeRelaunchPending = false;
     g_breezePollTick = 0;
+    g_breezeOverlay = BreezeOverlayState::None;
+    g_breezeOverlayCapable = false;
+    g_breezeOverlayForegroundRequested = false;
 }
 
 static bool breezeSkipForegroundRestore() {
@@ -918,14 +1064,112 @@ static void closeHeldBreezeIfGameNeedsApplet(const char* trigger) {
         return;
     switchu::FileLog::log("[breeze] game opened a library applet (%s); closing held Breeze",
                           trigger);
+    if (g_breezeOverlay == BreezeOverlayState::Shown &&
+        sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 500))
+        g_breezeOverlay = BreezeOverlayState::Hidden;
     g_breezeCloseForGame = true;
     g_pendingForegroundAppletHome = true;
 }
 
+// Overlay mode HOME. Returns true when HOME was consumed.
+static bool handleBreezeOverlayHome(const char* source) {
+    switch (g_breezeOverlay) {
+        case BreezeOverlayState::Shown:
+            // A Breeze that doesn't answer may still hold the controller; take
+            // it back for the game so HOME always returns control.
+            if (!sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 1000))
+                restoreInputAfterBreezeOverlay();
+            g_breezeOverlay = BreezeOverlayState::Hidden;
+            breezeOverlayTrace("%s HOME -> hide Breeze overlay", source);
+            return true;
+
+        case BreezeOverlayState::Hidden:
+            if (sendBreezeOverlay(smi::BreezeOverlayCommand::Show, 1000))
+                g_breezeOverlay = BreezeOverlayState::Shown;
+            breezeOverlayTrace("%s HOME -> show Breeze overlay state=%d", source,
+                               static_cast<int>(g_breezeOverlay));
+            return true;
+
+        case BreezeOverlayState::None:
+            break;
+    }
+
+    // Breeze in front of the suspended game. It must stop drawing to its applet
+    // window before the game takes the foreground, or its render loop waits
+    // for that window forever.
+    if (daemon::app::hasForeground())
+        return false;
+    // Breeze's Exit removes breeze_running; hbmenu left in the applet can't answer.
+    if (!readBreezeOverlayCapability()) {
+        breezeOverlayTrace("%s HOME: breeze_running has no capability; not using the overlay", source);
+        return false;
+    }
+    if (!sendBreezeOverlay(smi::BreezeOverlayCommand::EnterHidden, 1500)) {
+        breezeOverlayTrace("%s HOME -> Breeze overlay unavailable; holding Breeze instead", source);
+        return false;
+    }
+    const Result rc = daemon::app::resume();
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[%s] HOME -> game resume FAIL: 0x%X; Breeze stays in front", source, rc);
+        sendBreezeOverlay(smi::BreezeOverlayCommand::EnterNormal, 1000);
+        return true;
+    }
+    g_breezeHidden = true;
+    g_breezeOverlay = BreezeOverlayState::Hidden;
+    breezeOverlayTrace("%s HOME -> game, Breeze overlay ready", source);
+    return true;
+}
+
 // Returns true when HOME was consumed by the Breeze toggle.
 static bool handleBreezeHome(const char* source) {
+    // Breeze's SwitchU button: close the applet (hbmenu, after Breeze exited) so
+    // the SwitchU menu opens, the same way HOME does with the toggle Off.
+    const bool openMenuRequested = breezeFlagExists(smi::kBreezeOpenMenuFlag);
+    if (openMenuRequested)
+        ::remove(smi::kBreezeOpenMenuFlag);
+    if (openMenuRequested && g_breezeSession && g_foregroundAppletActive &&
+        !g_breezeCloseForGame && !g_breezeCloseForSleep) {
+        if (g_breezeOverlay != BreezeOverlayState::None) {
+            sendBreezeOverlay(smi::BreezeOverlayCommand::EnterNormal, 1000);
+            g_breezeOverlay = BreezeOverlayState::None;
+        }
+        if (daemon::app::isRunning() && daemon::app::hasForeground())
+            takeForegroundFromRunningApp(source);
+        g_breezeHidden = false;
+        g_pendingForegroundAppletHome = true;
+        breezeOverlayTrace("%s HOME: SwitchU button used; closing Breeze for the SwitchU menu", source);
+        return true;
+    }
+
     if (!g_breezeSession || !g_foregroundAppletActive || g_breezeCloseForGame || g_breezeCloseForSleep)
         return false;
+
+    const BreezeToggleMode toggle = readBreezeToggleMode();
+    if (!g_breezeOverlayCapable && toggle == BreezeToggleMode::Overlay)
+        g_breezeOverlayCapable = readBreezeOverlayCapability();
+
+    // The toggle was changed away from Overlay in Breeze's settings: end the
+    // overlay (Breeze gives the controller back) and handle HOME for the new mode.
+    if (g_breezeOverlay != BreezeOverlayState::None && toggle != BreezeToggleMode::Overlay) {
+        sendBreezeOverlay(smi::BreezeOverlayCommand::EnterNormal, 1000);
+        g_breezeOverlay = BreezeOverlayState::None;
+        if (toggle == BreezeToggleMode::Off) {
+            // Off: HOME reaches the SwitchU menu. Close Breeze; the menu opens
+            // once its applet has closed.
+            if (daemon::app::isRunning() && daemon::app::hasForeground())
+                takeForegroundFromRunningApp(source);
+            g_breezeHidden = false;
+            g_pendingForegroundAppletHome = true;
+            breezeOverlayTrace("%s HOME: toggle is Off; closing Breeze for the SwitchU menu", source);
+            return true;
+        }
+        breezeOverlayTrace("%s HOME: toggle left Overlay; overlay ended", source);
+    }
+
+    if (g_breezeOverlayCapable && daemon::app::isRunning() &&
+        (g_breezeOverlay != BreezeOverlayState::None || toggle == BreezeToggleMode::Overlay) &&
+        handleBreezeOverlayHome(source))
+        return true;
 
     if (g_breezeHidden || (daemon::app::isRunning() && daemon::app::hasForeground())) {
         // Game in front, Breeze held behind it: reclaiming the foreground shows
@@ -947,7 +1191,7 @@ static bool handleBreezeHome(const char* source) {
     if (mode == BreezeToggleMode::Off)
         return false;
 
-    if (mode == BreezeToggleMode::Keep) {
+    if (mode == BreezeToggleMode::Keep || mode == BreezeToggleMode::Overlay) {
         const Result rc = daemon::app::resume();
         if (R_FAILED(rc)) {
             switchu::FileLog::log("[%s] HOME -> game resume FAIL: 0x%X", source, rc);
@@ -976,6 +1220,9 @@ static bool deferSleepForHeldBreeze(const char* source) {
         return false;
     if (!g_breezeCloseForSleep) {
         switchu::FileLog::logCommit("[%s] sleep requested; closing held Breeze first", source);
+        if (g_breezeOverlay == BreezeOverlayState::Shown &&
+            sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 500))
+            g_breezeOverlay = BreezeOverlayState::Hidden;
         g_breezeCloseForSleep = true;
         g_pendingForegroundAppletHome = true;
     }
@@ -989,6 +1236,13 @@ static bool finishBreezeApplet(const char* name) {
     const bool resumeGame = g_breezeResumeOnClose;
     const bool closedForGame = g_breezeCloseForGame;
     const bool closedForSleep = g_breezeCloseForSleep;
+    if (g_breezeSession)
+        breezeOverlayTrace("%s applet closed overlay_state=%d", name, static_cast<int>(g_breezeOverlay));
+    if (g_breezeOverlay == BreezeOverlayState::Shown)
+        restoreInputAfterBreezeOverlay();
+    g_breezeOverlay = BreezeOverlayState::None;
+    g_breezeOverlayCapable = false;
+    g_breezeOverlayForegroundRequested = false;
     g_breezeCandidate = false;
     g_breezeSession = false;
     g_breezeHidden = false;
@@ -996,6 +1250,7 @@ static bool finishBreezeApplet(const char* name) {
     g_breezeCloseForGame = false;
     g_breezeCloseForSleep = false;
     ::remove(smi::kBreezeRunningFlag);
+    ::remove(smi::kBreezeOpenMenuFlag);
     if (!wasBreeze)
         return false;
 
@@ -1366,14 +1621,33 @@ static void pumpBreezeAppletMessages() {
         if (!breezeFlagExists(smi::kBreezeRunningFlag))
             return;
         g_breezeSession = true;
-        switchu::FileLog::log("[breeze] session started via %s",
-                              g_breezeViaUserPage ? "User Page" : "Album");
+        g_breezeOverlayCapable = readBreezeOverlayCapability();
+        breezeOverlayTrace("session started via %s overlay_capable=%d toggle=%d",
+                           g_breezeViaUserPage ? "User Page" : "Album",
+                           g_breezeOverlayCapable ? 1 : 0, static_cast<int>(readBreezeToggleMode()));
+    }
+
+    if (g_breezeOverlay != BreezeOverlayState::None) {
+        drainBreezeOverlayMessages(smi::BreezeOverlayCommand::Ack);
+        if (g_breezeOverlayForegroundRequested) {
+            // Breeze is exiting from the overlay; its applet (hbmenu) needs the
+            // foreground to be usable again.
+            g_breezeOverlayForegroundRequested = false;
+            g_breezeOverlay = BreezeOverlayState::None;
+            if (takeForegroundFromRunningApp("breeze-overlay"))
+                g_breezeHidden = false;
+            breezeOverlayTrace("overlay closed by Breeze; applet back in front");
+        }
     }
 
     // mainLoop is blocked while the applet runs, so watch the game here.
     if (daemon::app::checkFinished()) {
         switchu::FileLog::log("[breeze] game exited while Breeze open (held=%d)",
                               g_breezeHidden ? 1 : 0);
+        if (g_breezeOverlay != BreezeOverlayState::None) {
+            sendBreezeOverlay(smi::BreezeOverlayCommand::EnterNormal, 1000);
+            g_breezeOverlay = BreezeOverlayState::None;
+        }
         g_pendingHomeMenuLaunch = false;
         g_pendingHomeMenuSource = nullptr;
         g_pendingHomeMenuStartedAt = 0;
@@ -1415,6 +1689,7 @@ static Result launchLibraryApplet(AppletId id, const char* name,
         .inputCount = inData && inDataSize ? 1U : 0U,
         .skipForegroundRestore = breezeCandidate ? breezeSkipForegroundRestore : nullptr,
         .terminateOnExit = breezeCandidate ? breezeTerminateOnExit : nullptr,
+        .activeHolder = breezeCandidate ? &g_breezeHolder : nullptr,
     };
     const Result rc = daemon::runLibraryApplet(
         request,
@@ -1578,6 +1853,7 @@ static Result launchUserProfile(AccountUid uid) {
         .inputCount = 1,
         .skipForegroundRestore = breezeSkipForegroundRestore,
         .terminateOnExit = breezeTerminateOnExit,
+        .activeHolder = &g_breezeHolder,
     };
     const Result rc = daemon::runLibraryApplet(
         request, pumpBreezeAppletMessages,

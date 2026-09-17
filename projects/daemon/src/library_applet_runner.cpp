@@ -77,6 +77,8 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
         return rc;
     }
     guard.started = true;
+    if (request.activeHolder)
+        *request.activeHolder = &guard.holder;
 
     bool exitWasRequested = false;
     bool terminated = false;
@@ -105,6 +107,8 @@ Result runLibraryApplet(const LibraryAppletRequest& request,
         svcSleepThread(10'000'000ULL);
     }
 
+    if (request.activeHolder)
+        *request.activeHolder = nullptr;
     appletHolderJoin(&guard.holder);
     const LibAppletExitReason exitReason = appletHolderGetExitReason(&guard.holder);
     // Closing the applet on purpose isn't a failure of the applet.
