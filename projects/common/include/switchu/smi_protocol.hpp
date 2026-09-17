@@ -178,6 +178,12 @@ static constexpr const char* kBreezeOpenMenuFlag   = "sdmc:/config/SwitchU/breez
 // Written by this fork's daemon at boot (and by Breeze after installing the
 // fork) so Breeze can tell the Home-toggle fork from upstream SwitchU.
 static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_toggle";
+// Installed with each fork release (xmake.lua writes it): "interface=N" and
+// "version=<release tag>". Breeze reads the interface level to decide whether
+// the installed fork is new enough:
+//   1 (no file, releases 1.2.0a-d): Home toggle No restart / Fast restart
+//   2: Overlay mode (smi::BreezeOverlayCommand) and Breeze's SwitchU button
+static constexpr const char* kForkInfoPath = "sdmc:/switch/SwitchU/fork.txt";
 
 // Breeze overlay (fork-only). kBreezeHomeToggleFlag = "overlay" keeps Breeze
 // alive behind the running game; HOME then shows and hides Breeze on its own

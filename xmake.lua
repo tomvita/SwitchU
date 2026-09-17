@@ -8,8 +8,14 @@ add_rules("mode.debug", "mode.release")
 
 -- tomvita's fork: version is the fork's GitHub release tag. SwitchU-Manager
 -- compares it with tomvita/SwitchU's latest tag, so bump it for every release.
-local version = "1.2.0d"
+local version = "1.2.0e"
 local version_define = string.format('SWITCHU_VERSION="%s"', version)
+
+-- Breeze <-> SwitchU interface level, installed with the release as
+-- switch/SwitchU/fork.txt (see smi::kForkInfoPath). Breeze offers to install or
+-- update the fork when this is lower than it needs. Bump it only when the
+-- interface changes, not for every release.
+local breeze_interface = 2
 
 set_version("1.2.0")
 
@@ -244,6 +250,18 @@ target("SwitchU")
         set_values("switch.install_contents", false)
         set_values("switch.assets_dir", "SwitchU")
         set_values("switch.raw_exefs_dir", "switch/SwitchU/bin/menu")
+        -- Script scope can't see this file's locals; pass them as values.
+        set_values("fork.interface", tostring(breeze_interface))
+        set_values("fork.version", version)
+
+        after_install(function (target)
+            local dir = path.join(target:installdir(), "switch", "SwitchU")
+            os.mkdir(dir)
+            io.writefile(path.join(dir, "fork.txt"),
+                string.format("interface=%s\nversion=%s\n",
+                    target:values("fork.interface"), target:values("fork.version")))
+            cprint("${bright green}installed${clear} fork.txt → %s", dir)
+        end)
     end
 target_end()
 
