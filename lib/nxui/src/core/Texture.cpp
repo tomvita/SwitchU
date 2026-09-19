@@ -165,6 +165,17 @@ bool Texture::loadFromPixels(GpuDevice& gpu, Renderer& ren,
         m_allocSize = needed;
     }
 
+    if (!m_mem) {
+        // Never reachable through the paths above, but initialize() would read
+        // through a null MemBlock rather than report anything.
+        if (oldSlot >= 0)
+            ren.releaseTextureSlot(oldSlot);
+        std::printf("[Texture] no image memory (%dx%d)\n", w, h);
+        m_valid = false;
+        m_slot = -1;
+        m_allocSize = 0;
+        return false;
+    }
     m_image.initialize(layout, m_mem, 0);
 
     if (!gpu.uploadTexture(m_image, rgba, w * h * 4, w, h)) {
@@ -211,7 +222,7 @@ bool Texture::loadFromPixelsPooled(GpuDevice& gpu, Renderer& ren,
         .initialize(layout);
 
     auto alloc = gpu.allocImageFromPool(layout.getSize(), layout.getAlignment());
-    if (!alloc.valid()) {
+    if (!alloc.valid() || !alloc.block) {
         std::printf("[Texture] pool alloc FAILED (%dx%d) — budget exhausted\n", w, h);
         // Half a texture is worse than none: it can still be bound and drawn.
         m_valid = false;

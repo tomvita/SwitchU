@@ -66,6 +66,8 @@ public:
     void show();
     void hide();
     bool isActive() const { return m_active || m_animating; }
+    // Open and owning the buttons; isActive() also covers the closing animation.
+    bool isOpen() const { return m_active; }
     bool isFullyVisible() const { return m_active && !m_animating; }
 
     // External real-time status update from daemon or system messages

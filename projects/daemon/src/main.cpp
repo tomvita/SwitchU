@@ -897,6 +897,60 @@ static BreezeToggleMode effectiveBreezeMode() {
     return mode;
 }
 
+// Sleep and wake, kept out of daemon.log: that file is buffered, held open and
+// lost if the console hangs, and its archives are hard to tell apart.
+static void powerTrace(const char* fmt, ...) {
+    char line[256];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    switchu::FileLog::log("[power] %s", line);
+
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(smi::kPowerLogPath, ec);
+    if (!ec && size > 64 * 1024)
+        ::remove(smi::kPowerLogPath);
+    if (FILE* file = fopen(smi::kPowerLogPath, "a")) {
+        std::fprintf(file, "%lums %s\n",
+                     static_cast<unsigned long>(armTicksToNs(armGetSystemTick()) / 1'000'000ULL), line);
+        fclose(file);
+    }
+    fsdevCommitDevice("sdmc");
+}
+
+// Breeze records the overlay layers it creates and deletes the file once it has
+// destroyed them. Anything left means Breeze was terminated with a layer alive.
+static void destroyLeftoverOverlayLayers(const char* when) {
+    FILE* file = fopen(smi::kBreezeOverlayLayersPath, "r");
+    if (!file)
+        return;
+    std::vector<unsigned long long> ids;
+    unsigned long long id = 0;
+    while (fscanf(file, "%llu", &id) == 1)
+        ids.push_back(id);
+    fclose(file);
+    ::remove(smi::kBreezeOverlayLayersPath);
+    if (ids.empty())
+        return;
+
+    Service root{}, app{}, manager{};
+    Result rc = smGetService(&root, "vi:m");
+    if (R_SUCCEEDED(rc)) {
+        const u32 inval = 1;
+        rc = serviceDispatchIn(&root, 2, inval, .out_num_objects = 1, .out_objects = &app);
+    }
+    if (R_SUCCEEDED(rc))
+        rc = serviceDispatch(&app, 102, .out_num_objects = 1, .out_objects = &manager);
+    for (unsigned long long layer : ids) {
+        const Result destroyRc = R_SUCCEEDED(rc) ? serviceDispatchIn(&manager, 2011, layer) : rc;
+        powerTrace("%s: leftover Breeze overlay layer %llu destroy rc=0x%X", when, layer, destroyRc);
+    }
+    if (serviceIsActive(&manager)) serviceClose(&manager);
+    if (serviceIsActive(&app)) serviceClose(&app);
+    if (serviceIsActive(&root)) serviceClose(&root);
+}
+
 static void breezeOverlayTrace(const char* fmt, ...) {
     char line[256];
     va_list args;
@@ -1219,7 +1273,8 @@ static bool deferSleepForHeldBreeze(const char* source) {
     if (!g_breezeSession || !g_foregroundAppletActive || !g_breezeHidden)
         return false;
     if (!g_breezeCloseForSleep) {
-        switchu::FileLog::logCommit("[%s] sleep requested; closing held Breeze first", source);
+        powerTrace("%s: sleep requested; closing held Breeze first (overlay_state=%d)",
+                   source, static_cast<int>(g_breezeOverlay));
         if (g_breezeOverlay == BreezeOverlayState::Shown &&
             sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 500))
             g_breezeOverlay = BreezeOverlayState::Hidden;
@@ -1238,6 +1293,8 @@ static bool finishBreezeApplet(const char* name) {
     const bool closedForSleep = g_breezeCloseForSleep;
     if (g_breezeSession)
         breezeOverlayTrace("%s applet closed overlay_state=%d", name, static_cast<int>(g_breezeOverlay));
+    if (wasBreeze)
+        destroyLeftoverOverlayLayers(name);
     if (g_breezeOverlay == BreezeOverlayState::Shown)
         restoreInputAfterBreezeOverlay();
     g_breezeOverlay = BreezeOverlayState::None;
@@ -1258,8 +1315,7 @@ static bool finishBreezeApplet(const char* name) {
         // HOME after wake reopens Breeze through the profile takeover. From
         // hbmenu that isn't possible, so HOME opens the SwitchU menu instead.
         g_breezeRelaunchPending = g_breezeViaUserPage && daemon::app::isRunning();
-        switchu::FileLog::logCommit("[breeze] %s closed for sleep; relaunch_on_home=%d",
-                                    name, g_breezeRelaunchPending ? 1 : 0);
+        powerTrace("%s closed for sleep; relaunch_on_home=%d", name, g_breezeRelaunchPending ? 1 : 0);
         startPowerSequence("breeze-sleep", smi::SystemMessage::EnterSleep);
         return true;
     }
@@ -1521,7 +1577,7 @@ static void handleGeneralChannel() {
         openMenuFromHome("sams");
         break;
         case 3:
-        switchu::FileLog::log("[sams] -> Sleep");
+        powerTrace("sams -> Sleep");
         if (deferSleepForHeldBreeze("sams"))
             break;
         startPowerSequence("sams-sleep", smi::SystemMessage::EnterSleep);
@@ -1565,18 +1621,20 @@ static void handleAppletMessages() {
         case 22:
         case 29:
         case 32:
-        switchu::FileLog::log("[ae] -> Sleep (msg=%u)", msg);
+        powerTrace("ae -> Sleep (msg=%u)", msg);
         if (deferSleepForHeldBreeze("ae"))
             break;
         // The application keeps its IApplicationAccessor across system sleep,
         // but must reacquire the foreground after wake. Keep our session state
         // in sync so the Wakeup path is allowed to call app::resume().
         daemon::app::onHomeSuspend();
+        powerTrace("ae sleep: starting sleep sequence");
         appletStartSleepSequence(true);
+        powerTrace("ae sleep: sleep sequence returned");
         break;
 
         case 26:
-        switchu::FileLog::log("[ae] -> Wakeup");
+        powerTrace("ae -> Wakeup");
         g_batteryRefreshPending.store(true);
         // Breeze in front of a suspended game stays in front after wake.
         if (daemon::app::isRunning() && !daemon::menu_la::isActive() &&
@@ -2721,6 +2779,7 @@ int main(int argc, char* argv[]) {
         switchu::FileLog::log("[daemon] event manager failed: 0x%X (non-fatal)", rc);
 
     ::remove(smi::kBreezeRunningFlag);
+    destroyLeftoverOverlayLayers("boot");
     {
         mkdir("sdmc:/config", 0777);
         mkdir("sdmc:/config/SwitchU", 0777);

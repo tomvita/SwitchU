@@ -276,6 +276,9 @@ private:
     void launchHomebrewMenu();
     void openCurrentUserPage();
     void createQuickSettings();
+    // Appends one line to sdmc:/config/SwitchU/menu_focus.log, opening and
+    // closing the file each time so it can be read while the menu is running.
+    static void menuFocusTrace(const char* fmt, ...);
     void openQuickSettings();
     void closeQuickSettings();
     void createThemeShop();
@@ -566,6 +569,9 @@ private:
     bool m_accessibilityReady = false;
     std::uint64_t m_fastReturnStartupTick = 0;
 
+    // Seconds focusRoot() has continuously returned nullptr (see the watchdog
+    // in onUpdate). Every such state is meant to last a few frames.
+    float m_inputStallSeconds = 0.f;
     bool m_leaveCapturePending = false;
     std::function<void()> m_leaveCaptureAfter;
     bool m_leaveCaptureDeferred = false;

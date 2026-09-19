@@ -124,7 +124,10 @@ public:
 
     ImageAlloc allocImageFromPool(uint32_t size, uint32_t alignment = 0);
     void resetImagePool();
-    dk::UniqueMemBlock allocImageMemory(uint32_t size);
+    // essential: skip the image-budget and free-memory checks. For the few
+    // allocations the renderer cannot run without (the 1x1 white texture),
+    // where refusing means a null MemBlock and a crash inside deko3d.
+    dk::UniqueMemBlock allocImageMemory(uint32_t size, bool essential = false);
     void freeImageMemory(uint32_t size);
 
     // The menu applet reserves a 224 MiB heap. Keep the dynamic image cache

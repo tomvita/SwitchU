@@ -345,6 +345,15 @@ bool WiiUMenuApp::presentInitialFrame(nxui::Renderer& ren) {
 
 void WiiUMenuApp::scheduleLeaveCapture(std::function<void()> afterCapture,
                                        std::uint64_t previewSuspendedTitleId) {
+    // The drawer never owns a leave: it is simply up, and unlike the dialogs it
+    // does not close itself when something is launched. Waiting for it below
+    // deadlocked -- a deferred capture makes focusRoot() nullptr, which stops
+    // every button action, including the B that would close the drawer, so
+    // nothing could ever finish the capture. HOME with the drawer open (a
+    // HomeRequest resuming the suspended game) was the way in. Close it here
+    // instead; the deferral then just waits out its 0.25 s close animation.
+    if (m_quickSettings && m_quickSettings->isOpen())
+        m_quickSettings->hide();
     // Preview the launching title as suspended before this frame renders so the
     // captured splash matches HOME after return (pulse on the new open title).
     if (previewSuspendedTitleId != 0)
@@ -4622,6 +4631,44 @@ void WiiUMenuApp::finalizeRefresh() {
 void WiiUMenuApp::onUpdate(float dt) {
     updateLeaveSplashHandoff(dt);
     pollDeferredLeaveCapture();
+
+    // A nullptr focus root dispatches no button action anywhere in the menu,
+    // while touch keeps working: the menu looks frozen with an overlay stuck on
+    // screen. Every state that does this is a few frames long (one capture, a
+    // splash handoff, a launch animation), except one that can deadlock:
+    // scheduleLeaveCapture() defers while an overlay is active, and the overlay
+    // then needs the button input the deferral just disabled. Nothing recovers
+    // that without a reboot, so name what is stuck and let go of it.
+    if (focusRoot() == nullptr) {
+        m_inputStallSeconds += dt;
+        if (m_inputStallSeconds >= 4.f) {
+            m_inputStallSeconds = 0.f;
+            menuFocusTrace("input stalled 4s: capturePending=%d captureDeferred=%d splash=%d "
+                           "launchAnim=%d folderCapture=%d | quickSettings=%d settings=%d "
+                           "themeShop=%d userSelect=%d dialog=%d contextMenu=%d textEntry=%d",
+                           m_leaveCapturePending ? 1 : 0,
+                           m_leaveCaptureDeferred ? 1 : 0,
+                           leaveSplashActive() ? 1 : 0,
+                           (m_launchAnim && m_launchAnim->isPlaying()) ? 1 : 0,
+                           m_folderCaptureRequested ? 1 : 0,
+                           (m_quickSettings && m_quickSettings->isActive()) ? 1 : 0,
+                           (m_settings && m_settings->isActive()) ? 1 : 0,
+                           (m_themeShop && m_themeShop->isActive()) ? 1 : 0,
+                           (m_userSelect && m_userSelect->isActive()) ? 1 : 0,
+                           (m_dialog && m_dialog->isActive()) ? 1 : 0,
+                           (m_contextMenu && m_contextMenu->isActive()) ? 1 : 0,
+                           (m_textEntry && m_textEntry->isActive()) ? 1 : 0);
+            // Only the deferral is released here: closing the overlays lets
+            // pollDeferredLeaveCapture() finish the capture and run the launch
+            // it was holding. A playing launch animation is left alone -- a
+            // slow title start is a legitimate long wait, and the animation
+            // owns the launch.
+            if (m_leaveCaptureDeferred)
+                closeActiveOverlays();
+        }
+    } else if (m_inputStallSeconds != 0.f) {
+        m_inputStallSeconds = 0.f;
+    }
     const float motionDt = m_leaveMotionFrozen ? 0.f : dt;
 
     // Widget-owned images are intentionally managed before recording the next
@@ -5074,6 +5121,7 @@ void WiiUMenuApp::onUpdate(float dt) {
     if (m_refreshQueued && m_deferredRefreshFrames == 0 &&
         !m_asyncRefreshPending && m_refreshCooldownFrames == 0 &&
         !(m_launchAnim && m_launchAnim->isPlaying()) &&
+        !(m_quickSettings && m_quickSettings->isActive()) &&
         !(m_userSelect && m_userSelect->isActive())) {
         DebugLog::log("[update] deferred refresh triggered, starting refreshAppList");
         refreshAppList();
@@ -5082,6 +5130,27 @@ void WiiUMenuApp::onUpdate(float dt) {
         finalizeRefresh();
     }
 #endif
+
+    // The panel owns the buttons while it is up, and it is the only thing that
+    // can close itself. Anything that takes the focus away (a grid rebuild, a
+    // page switch, a screen opening) left it on screen with B, the sticks and
+    // the shoulder buttons dead while touch still worked. Taking the focus back
+    // was not enough: with a modal open the panel must not hold it, and then
+    // nothing could dismiss the panel. So a panel that has lost the focus is
+    // closed instead, whatever took it.
+    if (m_quickSettings && m_quickSettings->isOpen() &&
+        focusManager().current() != m_quickSettings.get()) {
+        nxui::Widget* stealer = focusManager().current();
+        menuFocusTrace("quick settings lost focus to %s (dialog=%d textEntry=%d userSelect=%d contextMenu=%d settings=%d); closing it",
+                       stealer ? (stealer->tag().empty() ? "<untagged>" : stealer->tag().c_str()) : "<none>",
+                       (m_dialog && m_dialog->isActive()) ? 1 : 0,
+                       (m_textEntry && m_textEntry->isActive()) ? 1 : 0,
+                       (m_userSelect && m_userSelect->isActive()) ? 1 : 0,
+                       (m_contextMenu && m_contextMenu->isActive()) ? 1 : 0,
+                       (m_settings && m_settings->isActive()) ? 1 : 0);
+        m_quickSettings->hide();
+        m_dialogReturnFocus = nullptr;
+    }
 
     bool debugTouchBlocked = false;
 #ifdef SWITCHU_DEBUG_UI

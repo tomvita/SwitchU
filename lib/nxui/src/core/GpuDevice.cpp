@@ -265,9 +265,9 @@ void GpuDevice::waitIdle() {
     if (m_queue) m_queue.waitIdle();
 }
 
-dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
+dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size, bool essential) {
     size = (size + kGpuAlign - 1) & ~(kGpuAlign - 1);
-    if (m_imageMemUsed + size > kDefaultImageBudget) {
+    if (!essential && m_imageMemUsed + size > kDefaultImageBudget) {
         GpuDevice::logGpu( "[GpuDevice] image budget exceeded (%llu + %u > %llu), skipping\n",
                      (unsigned long long)m_imageMemUsed, size,
                      (unsigned long long)kDefaultImageBudget);
@@ -275,7 +275,8 @@ dk::UniqueMemBlock GpuDevice::allocImageMemory(uint32_t size) {
     }
     u64 total = 0;
     u64 used = 0;
-    if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
+    if (!essential &&
+        R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0)) &&
         R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)) &&
         total > used) {
         constexpr u64 kAllocationHeadroom = 24ull * 1024ull * 1024ull;
@@ -327,6 +328,8 @@ GpuDevice::ImageAlloc GpuDevice::allocImageFromPool(uint32_t size, uint32_t alig
     }
     // Try to fit in an existing chunk
     for (auto& chunk : m_imageChunks) {
+        if (!chunk.block)
+            continue;
         uint32_t aligned = (chunk.used + alignment - 1) & ~(alignment - 1);
         if (aligned + size <= chunk.size) {
             chunk.used = aligned + size;

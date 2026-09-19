@@ -47,7 +47,16 @@ bool Renderer::initialize() {
             .setDimensions(1, 1)
             .initialize(layout);
 
-        m_whiteMemBlock = m_gpu.allocImageMemory(layout.getSize());
+        // dk::Image::initialize dereferences the MemBlock, so a refused
+        // allocation crashed here (null read in getGpuAddrForImage) instead of
+        // failing: 010000000000100d crash reports, 2026-09-17/18. This one is
+        // 1x1 and the renderer cannot draw without it, so it bypasses the soft
+        // limits, and a real allocation failure now fails initialization.
+        m_whiteMemBlock = m_gpu.allocImageMemory(layout.getSize(), /*essential=*/true);
+        if (!m_whiteMemBlock) {
+            std::printf("[Renderer] white texture allocation FAILED\n");
+            return false;
+        }
         m_whiteImage.initialize(layout, m_whiteMemBlock, 0);
 
         uint32_t white = 0xFFFFFFFF;

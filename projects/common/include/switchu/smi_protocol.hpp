@@ -184,6 +184,13 @@ static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_
 //   1 (no file, releases 1.2.0a-d): Home toggle No restart / Fast restart
 //   2: Overlay mode (smi::BreezeOverlayCommand) and Breeze's SwitchU button
 static constexpr const char* kForkInfoPath = "sdmc:/switch/SwitchU/fork.txt";
+// Overlay layer ids Breeze created and hasn't destroyed (same path as Breeze's
+// OVERLAY_LAYERS_FILE). The layers are created for aruid 0, so no process owns
+// them: when Breeze is terminated (sleep, or a game applet) the daemon has to
+// destroy them, or a full-screen layer stays on the display.
+static constexpr const char* kBreezeOverlayLayersPath = "sdmc:/config/SwitchU/breeze_overlay_layers";
+// Power events, one fopen/fclose per line so a hang still leaves the trail.
+static constexpr const char* kPowerLogPath = "sdmc:/config/SwitchU/power.log";
 
 // Breeze overlay (fork-only). kBreezeHomeToggleFlag = "overlay" keeps Breeze
 // alive behind the running game; HOME then shows and hides Breeze on its own

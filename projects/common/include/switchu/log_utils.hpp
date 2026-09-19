@@ -198,6 +198,21 @@ inline bool rotate_current_log(const char* log_dir, const char* base_name, const
     if (std::filesystem::exists(current_path, ec)) {
         char archived_path[256];
         build_archived_log_path(archived_path, sizeof(archived_path), log_dir, base_name, extension);
+        // The clock isn't set yet when the daemon starts, so every boot builds
+        // nearly the same name; without this the previous boot's log is lost.
+        if (std::filesystem::exists(archived_path, ec)) {
+            char unique_path[256];
+            for (int attempt = 2; attempt <= 9; ++attempt) {
+                std::snprintf(unique_path, sizeof(unique_path), "%.*s-%d%s",
+                              static_cast<int>(std::strlen(archived_path) - std::strlen(extension)),
+                              archived_path, attempt, extension);
+                ec.clear();
+                if (!std::filesystem::exists(unique_path, ec)) {
+                    std::snprintf(archived_path, sizeof(archived_path), "%s", unique_path);
+                    break;
+                }
+            }
+        }
         ec.clear();
         std::filesystem::rename(current_path, archived_path, ec);
         can_truncate = !ec;

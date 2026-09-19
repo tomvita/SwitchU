@@ -1,3 +1,5 @@
+#include <cstdarg>
+#include <cstdio>
 #include "WiiUMenuApp.hpp"
 #include "themeshop/ThemePackageInstaller.hpp"
 #include "widgets/GlossyIcon.hpp"
@@ -622,6 +624,19 @@ void WiiUMenuApp::createQuickSettings() {
             m_overlayLayer->removeChild(overlay.get());
             m_overlayLayer->addChild(overlay);
         }
+    }
+}
+
+void WiiUMenuApp::menuFocusTrace(const char* fmt, ...) {
+    char line[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(line, sizeof(line), fmt, args);
+    va_end(args);
+    DebugLog::log("[focus] %s", line);
+    if (FILE* file = std::fopen("sdmc:/config/SwitchU/menu_focus.log", "a")) {
+        std::fprintf(file, "%s\n", line);
+        std::fclose(file);
     }
 }
 
