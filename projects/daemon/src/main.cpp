@@ -960,15 +960,30 @@ static void breezeOverlayTrace(const char* fmt, ...) {
     switchu::FileLog::log("[breeze] %s", line);
 }
 
-static bool readBreezeOverlayCapability() {
+// breeze_running holds space-separated capabilities.
+static bool readBreezeCapability(const char* capability) {
     FILE* file = fopen(smi::kBreezeRunningFlag, "rb");
     if (!file)
         return false;
-    char value[16] = {};
+    char value[64] = {};
     fread(value, 1, sizeof(value) - 1, file);
     fclose(file);
-    return std::strncmp(value, smi::kBreezeOverlayCapability,
-                        std::strlen(smi::kBreezeOverlayCapability)) == 0;
+    const size_t length = std::strlen(capability);
+    for (const char* token = value; *token != '\0';) {
+        while (*token == ' ' || *token == '\n' || *token == '\r')
+            ++token;
+        const char* end = token;
+        while (*end != '\0' && *end != ' ' && *end != '\n' && *end != '\r')
+            ++end;
+        if (static_cast<size_t>(end - token) == length && std::strncmp(token, capability, length) == 0)
+            return true;
+        token = end;
+    }
+    return false;
+}
+
+static bool readBreezeOverlayCapability() {
+    return readBreezeCapability(smi::kBreezeOverlayCapability);
 }
 
 static const char* breezeOverlayCommandName(smi::BreezeOverlayCommand command) {
@@ -977,8 +992,10 @@ static const char* breezeOverlayCommandName(smi::BreezeOverlayCommand command) {
         case smi::BreezeOverlayCommand::Show: return "Show";
         case smi::BreezeOverlayCommand::Hide: return "Hide";
         case smi::BreezeOverlayCommand::EnterNormal: return "EnterNormal";
+        case smi::BreezeOverlayCommand::Release: return "Release";
         case smi::BreezeOverlayCommand::Ack: return "Ack";
         case smi::BreezeOverlayCommand::RequestForeground: return "RequestForeground";
+        case smi::BreezeOverlayCommand::StateChanged: return "StateChanged";
     }
     return "?";
 }
@@ -1000,6 +1017,14 @@ static bool drainBreezeOverlayMessages(smi::BreezeOverlayCommand awaited) {
                 acked = true;
         } else if (command == smi::BreezeOverlayCommand::RequestForeground) {
             g_breezeOverlayForegroundRequested = true;
+        } else if (command == smi::BreezeOverlayCommand::StateChanged &&
+                   g_breezeOverlay != BreezeOverlayState::None) {
+            // Breeze showed itself on a breakpoint hit, or hid itself after one.
+            if (message.arg == static_cast<uint32_t>(smi::BreezeOverlayCommand::Show))
+                g_breezeOverlay = BreezeOverlayState::Shown;
+            else if (message.arg == static_cast<uint32_t>(smi::BreezeOverlayCommand::Hide))
+                g_breezeOverlay = BreezeOverlayState::Hidden;
+            breezeOverlayTrace("overlay state changed by Breeze: %d", static_cast<int>(g_breezeOverlay));
         }
     }
     return acked;
@@ -1107,6 +1132,22 @@ static bool breezeTerminateOnExit() {
     return g_breezeCloseForSleep || g_breezeCloseForGame;
 }
 
+// Before closing a held Breeze. A Breeze with kBreezeOverlayCapability2 gets
+// Release: it lets a game stopped at one of its breakpoints run again (nothing
+// would resume it once Breeze is gone) and drops its layer. An older Breeze only
+// needs Hide, and only when it holds the controller.
+static void releaseBreezeOverlayBeforeClose() {
+    if (g_breezeOverlay == BreezeOverlayState::None)
+        return;
+    if (readBreezeCapability(smi::kBreezeOverlayCapability2)) {
+        if (sendBreezeOverlay(smi::BreezeOverlayCommand::Release, 1000))
+            g_breezeOverlay = BreezeOverlayState::Hidden;
+    } else if (g_breezeOverlay == BreezeOverlayState::Shown &&
+               sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 500)) {
+        g_breezeOverlay = BreezeOverlayState::Hidden;
+    }
+}
+
 // A library applet held behind the game blocks the game's own library applets
 // (keyboard, error dialogs). Close Breeze as soon as the game asks for one.
 static void closeHeldBreezeIfGameNeedsApplet(const char* trigger) {
@@ -1118,9 +1159,7 @@ static void closeHeldBreezeIfGameNeedsApplet(const char* trigger) {
         return;
     switchu::FileLog::log("[breeze] game opened a library applet (%s); closing held Breeze",
                           trigger);
-    if (g_breezeOverlay == BreezeOverlayState::Shown &&
-        sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 500))
-        g_breezeOverlay = BreezeOverlayState::Hidden;
+    releaseBreezeOverlayBeforeClose();
     g_breezeCloseForGame = true;
     g_pendingForegroundAppletHome = true;
 }
@@ -1275,9 +1314,7 @@ static bool deferSleepForHeldBreeze(const char* source) {
     if (!g_breezeCloseForSleep) {
         powerTrace("%s: sleep requested; closing held Breeze first (overlay_state=%d)",
                    source, static_cast<int>(g_breezeOverlay));
-        if (g_breezeOverlay == BreezeOverlayState::Shown &&
-            sendBreezeOverlay(smi::BreezeOverlayCommand::Hide, 500))
-            g_breezeOverlay = BreezeOverlayState::Hidden;
+        releaseBreezeOverlayBeforeClose();
         g_breezeCloseForSleep = true;
         g_pendingForegroundAppletHome = true;
     }

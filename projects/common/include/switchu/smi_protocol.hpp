@@ -183,6 +183,7 @@ static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_
 // the installed fork is new enough:
 //   1 (no file, releases 1.2.0a-d): Home toggle No restart / Fast restart
 //   2: Overlay mode (smi::BreezeOverlayCommand) and Breeze's SwitchU button
+//   3: BreezeOverlayCommand Release / StateChanged (Breeze's Break and Trace)
 static constexpr const char* kForkInfoPath = "sdmc:/switch/SwitchU/fork.txt";
 // Overlay layer ids Breeze created and hasn't destroyed (same path as Breeze's
 // OVERLAY_LAYERS_FILE). The layers are created for aruid 0, so no process owns
@@ -199,7 +200,12 @@ static constexpr const char* kPowerLogPath = "sdmc:/config/SwitchU/power.log";
 // understands BreezeOverlayMessage, exchanged as 16-byte storages over the
 // library applet's interactive in/out channel. Every command is answered with
 // Ack (arg = the command).
+//
+// kBreezeRunningFlag holds space-separated capabilities with
+// kBreezeOverlayCapability first, since older daemons only compare that prefix.
+// kBreezeOverlayCapability2: Breeze understands Release and sends StateChanged.
 static constexpr const char* kBreezeOverlayCapability = "overlay1";
+static constexpr const char* kBreezeOverlayCapability2 = "overlay2";
 static constexpr uint32_t kBreezeOverlayMagic = 0x564F5A42; // "BZOV"
 
 enum class BreezeOverlayCommand : uint32_t {
@@ -207,8 +213,12 @@ enum class BreezeOverlayCommand : uint32_t {
     Show = 2,               // draw over the game and take its input
     Hide = 3,               // give input back and clear the overlay
     EnterNormal = 4,        // Breeze is about to get the foreground back
+    Release = 5,            // overlay2: the applet is about to be closed (sleep, the game's
+                            // own applet); let the game run, give input back, drop the layer
     Ack = 0x81,             // Breeze -> daemon
     RequestForeground = 0x82, // Breeze -> daemon: exiting, bring the applet to the front
+    StateChanged = 0x83,    // overlay2, Breeze -> daemon, not acked: Breeze showed itself
+                            // (arg = Show, a breakpoint hit) or hid itself (arg = Hide)
 };
 
 struct BreezeOverlayMessage {
