@@ -8,14 +8,14 @@ add_rules("mode.debug", "mode.release")
 
 -- tomvita's fork: version is the fork's GitHub release tag. SwitchU-Manager
 -- compares it with tomvita/SwitchU's latest tag, so bump it for every release.
-local version = "1.2.0h"
+local version = "1.2.0i"
 local version_define = string.format('SWITCHU_VERSION="%s"', version)
 
 -- Breeze <-> SwitchU interface level, installed with the release as
 -- switch/SwitchU/fork.txt (see smi::kForkInfoPath). Breeze offers to install or
 -- update the fork when this is lower than it needs. Bump it only when the
 -- interface changes, not for every release.
-local breeze_interface = 3
+local breeze_interface = 4
 
 set_version("1.2.0")
 
@@ -261,6 +261,14 @@ target("SwitchU")
                 string.format("interface=%s\nversion=%s\n",
                     target:values("fork.interface"), target:values("fork.version")))
             cprint("${bright green}installed${clear} fork.txt → %s", dir)
+
+            -- The same file next to the daemon: a daemon-only install (Breeze's
+            -- home_daemon.zip, no switch/SwitchU) still reports its interface.
+            local daemon_dir = path.join(target:installdir(), "atmosphere", "contents", "0100000000001000")
+            os.mkdir(daemon_dir)
+            io.writefile(path.join(daemon_dir, "fork.txt"),
+                string.format("interface=%s\nversion=%s\n",
+                    target:values("fork.interface"), target:values("fork.version")))
 
             -- Breeze loader for the Album slot (breeze_first without the User Page loader).
             local loader_dir = path.join(target:installdir(), "atmosphere", "contents",

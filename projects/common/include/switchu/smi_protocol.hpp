@@ -198,7 +198,11 @@ static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_
 //   1 (no file, releases 1.2.0a-d): Home toggle No restart / Fast restart
 //   2: Overlay mode (smi::BreezeOverlayCommand) and Breeze's SwitchU button
 //   3: BreezeOverlayCommand Release / StateChanged (Breeze's Break and Trace)
+//   4: kBreezeFirstFlag (Breeze as HOME) and the Album loader next to the daemon
 static constexpr const char* kForkInfoPath = "sdmc:/switch/SwitchU/fork.txt";
+// The same file next to the daemon (from 1.2.0i), so a daemon-only install
+// without switch/SwitchU still tells Breeze its interface level.
+static constexpr const char* kDaemonForkInfoPath = "sdmc:/atmosphere/contents/0100000000001000/fork.txt";
 // Overlay layer ids Breeze created and hasn't destroyed (same path as Breeze's
 // OVERLAY_LAYERS_FILE). The layers are created for aruid 0, so no process owns
 // them: when Breeze is terminated (sleep, or a game applet) the daemon has to
