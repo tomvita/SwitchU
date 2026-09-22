@@ -261,6 +261,14 @@ target("SwitchU")
                 string.format("interface=%s\nversion=%s\n",
                     target:values("fork.interface"), target:values("fork.version")))
             cprint("${bright green}installed${clear} fork.txt → %s", dir)
+
+            -- Breeze loader for the Album slot (breeze_first without the User Page loader).
+            local loader_dir = path.join(target:installdir(), "atmosphere", "contents",
+                                         "0100000000001000", "breeze_loader")
+            os.mkdir(loader_dir)
+            os.cp(path.join(os.projectdir(), "projects/daemon/breeze_loader/main"), loader_dir)
+            os.cp(path.join(os.projectdir(), "projects/daemon/breeze_loader/main.npdm"), loader_dir)
+            cprint("${bright green}installed${clear} Breeze loader → %s", loader_dir)
         end)
     end
 target_end()
