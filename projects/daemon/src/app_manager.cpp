@@ -215,38 +215,76 @@ Result ApplicationSession::stopCurrent(std::uint64_t gracefulTimeoutNs,
     return 0;
 }
 
-Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
-    if (appletApplicationActive(&m_application)) {
-        const Result stopRc = stopCurrent(kGracefulExitTimeoutNs, "replace-before-launch");
-        if (R_FAILED(stopRc))
-            return stopRc;
-    } else if (m_state != SessionState::Idle) {
+Result ApplicationSession::stopBeforeLaunch(const char* reason) {
+    if (appletApplicationActive(&m_application))
+        return stopCurrent(kGracefulExitTimeoutNs, reason);
+    if (m_state != SessionState::Idle)
         resetToIdle();
-    }
+    return 0;
+}
 
+void ApplicationSession::beginSession(std::uint64_t titleId, AccountUid uid,
+                                      const char* kind) {
     ++m_sessionId;
     m_titleId = titleId;
     m_lastResult = 0;
     m_lastExitReason = AppletApplicationExitReason_Normal;
     switchu::FileLog::log(
-        "[app] session=%lu launch title=0x%016lX uid_valid=%d",
-        static_cast<unsigned long>(m_sessionId), titleId,
+        "[app] session=%lu %s title=0x%016lX uid_valid=%d",
+        static_cast<unsigned long>(m_sessionId), kind, titleId,
         accountUidIsValid(&uid) ? 1 : 0);
 
     const Result touchRc = nsTouchApplication(titleId);
     if (R_FAILED(touchRc))
         switchu::FileLog::log("[app] nsTouchApplication non-fatal rc=0x%X", touchRc);
+}
 
-    const LaunchMetadata metadata = ensureApplicationSaveData(titleId, uid);
+Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
+    const Result stopRc = stopBeforeLaunch("replace-before-launch");
+    if (R_FAILED(stopRc))
+        return stopRc;
+
+    beginSession(titleId, uid, "launch");
+    const Result rc = appletCreateApplication(&m_application, titleId);
+    if (R_FAILED(rc))
+        return failTransition(rc, "create", false);
+    m_state = SessionState::Created;
+    return startCreated(uid);
+}
+
+// AppletMessage 50: another program called appletRequestLaunchApplication().
+// AM already holds the accessor for the requested title; only one application
+// can run at a time, so the current one (often the requester) exits first.
+Result ApplicationSession::launchRequested(AccountUid uid) {
+    const Result stopRc = stopBeforeLaunch("replace-before-requested-launch");
+    if (R_FAILED(stopRc))
+        return stopRc;
+
+    Result rc = appletPopLaunchRequestedApplication(&m_application);
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[app] PopLaunchRequestedApplication FAIL rc=0x%X", rc);
+        m_application = {};
+        m_lastResult = rc;
+        return rc;
+    }
+
+    u64 titleId = 0;
+    rc = appletApplicationGetApplicationId(&m_application, &titleId);
+    if (R_FAILED(rc))
+        switchu::FileLog::log("[app] requested GetApplicationId non-fatal rc=0x%X", rc);
+
+    beginSession(titleId, uid, "requested-launch");
+    m_state = SessionState::Created;
+    return startCreated(uid);
+}
+
+Result ApplicationSession::startCreated(AccountUid uid) {
+    const LaunchMetadata metadata = ensureApplicationSaveData(m_titleId, uid);
     switchu::FileLog::log(
         "[app] launch metadata startup_user=%u option=%u accepts_user=%d needs_user=%d",
         static_cast<unsigned>(metadata.startupUserAccount),
         static_cast<unsigned>(metadata.startupUserAccountOption),
         metadata.acceptsUser ? 1 : 0, metadata.needsUser ? 1 : 0);
-    Result rc = appletCreateApplication(&m_application, titleId);
-    if (R_FAILED(rc))
-        return failTransition(rc, "create", false);
-    m_state = SessionState::Created;
 
     struct PreselectedUserArgument {
         u32 magic;
@@ -257,6 +295,7 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
     } userArgument{};
     static_assert(sizeof(userArgument) == 0x88);
 
+    Result rc = 0;
     if (metadata.acceptsUser && accountUidIsValid(&uid)) {
         userArgument.magic = 0xC79497CA;
         userArgument.isSelected = 1;
@@ -294,7 +333,7 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
     m_state = SessionState::Foreground;
     m_lastResult = 0;
     switchu::FileLog::log("[app] session=%lu foreground title=0x%016lX",
-                          static_cast<unsigned long>(m_sessionId), titleId);
+                          static_cast<unsigned long>(m_sessionId), m_titleId);
     return 0;
 }
 
@@ -376,6 +415,7 @@ std::uint64_t suspendedTitleId() { return session().suspendedTitleId(); }
 SessionSnapshot snapshot() { return session().snapshot(); }
 Event* stateChangedEvent() { return session().stateChangedEvent(); }
 Result launch(std::uint64_t titleId, AccountUid uid) { return session().launch(titleId, uid); }
+Result launchRequested(AccountUid uid) { return session().launchRequested(uid); }
 Result resume() { return session().resume(); }
 Result terminate() { return session().terminate(); }
 Result areLibraryAppletsLeft(bool* out) { return session().areLibraryAppletsLeft(out); }

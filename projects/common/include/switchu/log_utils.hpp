@@ -8,6 +8,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <system_error>
 #include <vector>
@@ -106,26 +107,38 @@ inline bool has_archived_log_name(const char* file_name, const char* base_name, 
 }
 
 inline void prune_archived_logs(const char* log_dir, const char* base_name, const char* extension, size_t keep_count) {
-    std::vector<std::string> matches;
+    struct ArchivedLog {
+        std::string name;
+        std::time_t mtime;
+    };
+    std::vector<ArchivedLog> matches;
     std::error_code ec;
+    char path[256];
     for (const auto& entry : std::filesystem::directory_iterator(log_dir, ec)) {
         if (ec)
             break;
 
         const std::string file_name = entry.path().filename().string();
-        if (has_archived_log_name(file_name.c_str(), base_name, extension))
-            matches.emplace_back(file_name);
+        if (!has_archived_log_name(file_name.c_str(), base_name, extension))
+            continue;
+        std::snprintf(path, sizeof(path), "%s/%s", log_dir, file_name.c_str());
+        struct stat st{};
+        matches.push_back({file_name, ::stat(path, &st) == 0 ? st.st_mtime : 0});
     }
 
     if (matches.size() <= keep_count)
         return;
 
-    std::sort(matches.begin(), matches.end());
+    // Archive names carry the boot-time clock, which is still 1970 when the
+    // daemon starts, so name order says nothing about age. The SD card's
+    // modification time does.
+    std::sort(matches.begin(), matches.end(), [](const ArchivedLog& a, const ArchivedLog& b) {
+        return a.mtime != b.mtime ? a.mtime < b.mtime : a.name < b.name;
+    });
 
-    char path[256];
     const size_t delete_count = matches.size() - keep_count;
     for (size_t i = 0; i < delete_count; ++i) {
-        std::snprintf(path, sizeof(path), "%s/%s", log_dir, matches[i].c_str());
+        std::snprintf(path, sizeof(path), "%s/%s", log_dir, matches[i].name.c_str());
         ec.clear();
         std::filesystem::remove(path, ec);
     }

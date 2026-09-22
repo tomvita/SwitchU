@@ -36,6 +36,7 @@ public:
     ApplicationSession& operator=(const ApplicationSession&) = delete;
 
     Result launch(std::uint64_t titleId, AccountUid uid);
+    Result launchRequested(AccountUid uid);
     Result resume();
     Result terminate();
     Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs);
@@ -53,6 +54,9 @@ public:
 
 private:
     Result stopCurrent(std::uint64_t gracefulTimeoutNs, const char* reason);
+    Result stopBeforeLaunch(const char* reason);
+    void beginSession(std::uint64_t titleId, AccountUid uid, const char* kind);
+    Result startCreated(AccountUid uid);
     void closeAccessor();
     void resetToIdle();
     Result failTransition(Result rc, const char* stage, bool applicationStarted);
@@ -75,6 +79,7 @@ std::uint64_t suspendedTitleId();
 SessionSnapshot snapshot();
 Event* stateChangedEvent();
 Result launch(std::uint64_t titleId, AccountUid uid);
+Result launchRequested(AccountUid uid);
 Result resume();
 Result terminate();
 Result areLibraryAppletsLeft(bool* out);

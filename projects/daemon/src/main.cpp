@@ -262,6 +262,10 @@ static bool g_pendingForegroundAppletHome = false;
 static bool g_pendingHomeMenuLaunch = false;
 static const char* g_pendingHomeMenuSource = nullptr;
 static uint64_t g_pendingHomeMenuStartedAt = 0;
+// AppletMessage 50: a program called appletRequestLaunchApplication(). The
+// launch waits until the menu / foreground applet in front has closed.
+static bool g_launchRequestPending = false;
+static AccountUid g_lastLaunchUid{};
 
 // Breeze Home toggle (fork-only): see smi::kBreezeHomeToggleFlag.
 enum class BreezeToggleMode : uint8_t { Off, Keep, Restart, Overlay };
@@ -1129,7 +1133,8 @@ static bool breezeSkipForegroundRestore() {
 // Breeze held behind the game can't answer an exit request, so asking it to
 // exit only waited out the timeout (about 3 s before sleep). Close it at once.
 static bool breezeTerminateOnExit() {
-    return g_breezeCloseForSleep || g_breezeCloseForGame;
+    return g_breezeCloseForSleep || g_breezeCloseForGame ||
+           (g_launchRequestPending && g_breezeHidden);
 }
 
 // Before closing a held Breeze. A Breeze with kBreezeOverlayCapability2 gets
@@ -1394,6 +1399,12 @@ static Result launchPendingHomeMenu() {
     g_pendingHomeMenuSource = nullptr;
     g_pendingHomeMenuStartedAt = 0;
 
+    if (g_launchRequestPending) {
+        switchu::FileLog::log("[%s] HOME foreground acquired; menu skipped for requested launch",
+                              source);
+        return 0;
+    }
+
     if (g_breezeRelaunchPending) {
         g_breezeRelaunchPending = false;
         if (readBreezeToggleMode() != BreezeToggleMode::Off) {
@@ -1630,6 +1641,61 @@ static void handleGeneralChannel() {
     }
 }
 
+static void onLaunchRequested() {
+    switchu::FileLog::log(
+        "[ae] -> LaunchApplicationRequested appRunning=%d hasFG=%d menu=%d fgApplet=%d breeze=%d held=%d",
+        daemon::app::isRunning() ? 1 : 0, daemon::app::hasForeground() ? 1 : 0,
+        daemon::menu_la::hasHolder() ? 1 : 0, g_foregroundAppletActive ? 1 : 0,
+        g_breezeSession ? 1 : 0, g_breezeHidden ? 1 : 0);
+    g_launchRequestPending = true;
+
+    if (g_pendingHomeMenuLaunch) {
+        switchu::FileLog::log("[ae] clearing pending HOME foreground handoff: launch requested");
+        g_pendingHomeMenuLaunch = false;
+        g_pendingHomeMenuSource = nullptr;
+        g_pendingHomeMenuStartedAt = 0;
+    }
+
+    // The requester is usually the applet in front (hbmenu / sphaira / Breeze
+    // in Album or User Page). Close it; mainLoop launches once nothing holds
+    // the foreground, and relaunchMenuAfterApplet stays out of the way.
+    if (g_foregroundAppletActive) {
+        releaseBreezeOverlayBeforeClose();
+        g_pendingForegroundAppletHome = true;
+    } else if (daemon::menu_la::hasHolder()) {
+        const Result rc = daemon::menu_la::terminate();
+        switchu::FileLog::log("[ae] menu closed for requested launch rc=0x%X", rc);
+    }
+}
+
+static Result launchRequestedApplication() {
+    AccountUid uid = g_lastLaunchUid;
+    if (!accountUidIsValid(&uid)) {
+        Result rc = accountTrySelectUserWithoutInteraction(&uid, false);
+        if (R_FAILED(rc) || !accountUidIsValid(&uid)) {
+            AccountUid users[ACC_USER_LIST_SIZE]{};
+            s32 userCount = 0;
+            rc = accountListAllUsers(users, ACC_USER_LIST_SIZE, &userCount);
+            uid = (R_SUCCEEDED(rc) && userCount > 0) ? users[0] : AccountUid{};
+        }
+    }
+
+    const Result rc = daemon::app::launchRequested(uid);
+    switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,
+                          daemon::app::suspendedTitleId());
+    return rc;
+}
+
+static bool consumeLaunchRequest() {
+    if (!g_launchRequestPending || daemon::menu_la::hasHolder() || g_foregroundAppletActive)
+        return false;
+    g_launchRequestPending = false;
+
+    if (R_FAILED(launchRequestedApplication()) && !daemon::app::isRunning())
+        daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
+    return true;
+}
+
 static void handleAppletMessages() {
     u32 msg = 0;
     Result rc = appletGetMessage(&msg);
@@ -1653,6 +1719,10 @@ static void handleAppletMessages() {
 
         case 20:
         openMenuFromHome("ae");
+        break;
+
+        case 50:
+        onLaunchRequested();
         break;
 
         case 22:
@@ -2177,6 +2247,11 @@ static void handleMenuCommand() {
 }
 
 static Result relaunchMenuAfterApplet(const char* appletName) {
+    if (g_launchRequestPending) {
+        switchu::FileLog::log("[action] %s closed; menu skipped for requested launch",
+                              appletName);
+        return 0;
+    }
     const auto status = buildSystemStatus();
     const Result rc = daemon::menu_la::launch(smi::MenuStartMode::AppletReturn, status);
     switchu::FileLog::log(
@@ -2193,6 +2268,8 @@ static bool handleAction(daemon::SystemAction& action) {
     switchu::FileLog::log("[action] handling type=%u", (u32)action.type);
     switch (action.type) {
         case daemon::SystemActionType::LaunchApplication: {
+            if (accountUidIsValid(&action.uid))
+                g_lastLaunchUid = action.uid;
             Result rc = daemon::app::launch(action.titleId, action.uid);
             recordOperationResult(action.requestId, smi::SystemMessage::LaunchApplication,
                                   rc, action.titleId);
@@ -2438,6 +2515,7 @@ static void mainLoop() {
     }
 
     didWork |= consumeOneAction();
+    didWork |= consumeLaunchRequest();
 
     if (daemon::app::checkFinished()) {
         switchu::FileLog::log("[main] app exited");
@@ -2450,14 +2528,14 @@ static void mainLoop() {
         }
         if (daemon::menu_la::isActive()) {
             pushNotification(smi::MenuMessage::ApplicationExited);
-        } else {
+        } else if (!g_launchRequestPending) {
             daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
         }
         didWork = true;
     }
 
     if (!didWork && g_menuRelaunchCooldown <= 0 && g_actionQueue.empty() &&
-        !daemon::app::isRunning() && !daemon::menu_la::hasHolder() &&
+        !g_launchRequestPending && !daemon::app::isRunning() && !daemon::menu_la::hasHolder() &&
         !g_foregroundAppletActive) {
         switchu::FileLog::log("[main] no app/menu active; relaunching menu");
         daemon::menu_la::launch(smi::MenuStartMode::MainMenu, buildSystemStatus());
@@ -2474,6 +2552,7 @@ static bool mainLoopNeedsFastTick() {
         || g_appCatalogRefreshPending.load()
         || g_controlCacheRefreshPending.load()
         || g_menuRelaunchCooldown > 0
+        || g_launchRequestPending
         || !g_actionQueue.empty();
 }
 
