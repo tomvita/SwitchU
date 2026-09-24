@@ -8,7 +8,7 @@ add_rules("mode.debug", "mode.release")
 
 -- tomvita's fork: version is the fork's GitHub release tag. SwitchU-Manager
 -- compares it with tomvita/SwitchU's latest tag, so bump it for every release.
-local version = "1.2.0i"
+local version = "1.2.0j"
 local version_define = string.format('SWITCHU_VERSION="%s"', version)
 
 -- Breeze <-> SwitchU interface level, installed with the release as
