@@ -16,6 +16,10 @@ enum class SessionState : std::uint8_t {
     Error,
 };
 
+// Picks the user for a launch another program requested; the title is known only
+// once its accessor has been popped. A failure cancels the launch.
+using RequestedLaunchUserChooser = Result (*)(std::uint64_t titleId, AccountUid* outUid);
+
 struct SessionSnapshot {
     SessionState state = SessionState::Idle;
     std::uint64_t sessionId = 0;
@@ -36,7 +40,7 @@ public:
     ApplicationSession& operator=(const ApplicationSession&) = delete;
 
     Result launch(std::uint64_t titleId, AccountUid uid);
-    Result launchRequested(AccountUid uid);
+    Result launchRequested(RequestedLaunchUserChooser chooseUser);
     Result resume();
     Result terminate();
     Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs);
@@ -79,7 +83,7 @@ std::uint64_t suspendedTitleId();
 SessionSnapshot snapshot();
 Event* stateChangedEvent();
 Result launch(std::uint64_t titleId, AccountUid uid);
-Result launchRequested(AccountUid uid);
+Result launchRequested(RequestedLaunchUserChooser chooseUser);
 Result resume();
 Result terminate();
 Result areLibraryAppletsLeft(bool* out);

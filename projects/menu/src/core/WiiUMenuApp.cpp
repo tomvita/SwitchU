@@ -1325,9 +1325,12 @@ void WiiUMenuApp::composeRootPending(std::vector<PendingApp>& apps) {
 
     m_allApps.clear();
     m_allApps.reserve(apps.size());
+    m_recentRank.clear();
+    m_recentFront = 0;
     for (const auto& pending : apps) {
         if (pending.titleId == 0)
             continue;
+        m_recentRank.emplace(pending.titleId, static_cast<int>(m_recentRank.size()));
         AppEntry entry;
         entry.id = pending.id;
         entry.title = pending.title;
@@ -1593,11 +1596,8 @@ std::vector<std::uint64_t> WiiUMenuApp::projectSortedSlots(
     const int mode = m_config.sortMode;
     std::stable_sort(applications.begin(), applications.end(),
                      [&](const auto left, const auto right) {
-        if (mode == 2) {
-            const auto leftOpened = m_config.lastOpenedAt(left);
-            const auto rightOpened = m_config.lastOpenedAt(right);
-            return leftOpened != rightOpened && leftOpened > rightOpened;
-        }
+        if (mode == 2)
+            return recentRank(left) < recentRank(right);
         const std::string* leftTitle = items.at(left).title;
         const std::string* rightTitle = items.at(right).title;
         if (!leftTitle || !rightTitle) return false;
@@ -1827,10 +1827,10 @@ GridModel WiiUMenuApp::buildNameFilterModel(int perPage) {
             if (leftTitle != rightTitle)
                 return leftTitle < rightTitle;
         } else if (mode == 2) {
-            const auto leftOpened = m_config.lastOpenedAt(left->titleId);
-            const auto rightOpened = m_config.lastOpenedAt(right->titleId);
-            if (leftOpened != rightOpened)
-                return leftOpened > rightOpened;
+            const int leftRecent = recentRank(left->titleId);
+            const int rightRecent = recentRank(right->titleId);
+            if (leftRecent != rightRecent)
+                return leftRecent < rightRecent;
         }
         return rankOf(left) < rankOf(right);
     });
@@ -3156,6 +3156,18 @@ std::string WiiUMenuApp::sortModeLabel() const {
     }
 }
 
+int WiiUMenuApp::recentRank(std::uint64_t titleId) const {
+    const auto found = m_recentRank.find(titleId);
+    return found == m_recentRank.end() ? std::numeric_limits<int>::max() : found->second;
+}
+
+// The daemon moves a launched title to the front of its catalogue only once the
+// game has left the foreground; do the same here so a menu that is still
+// running already shows it first.
+void WiiUMenuApp::noteLaunchedRecent(std::uint64_t titleId) {
+    m_recentRank[titleId] = --m_recentFront;
+}
+
 // True while the grid shows an automatic order rather than the personal one.
 // A slot index in that view is a cell of the projection, not the layout slot a
 // move would be written back to, so rearranging is held until "My order".
@@ -3402,8 +3414,6 @@ void WiiUMenuApp::resumeSuspendedApplication(std::uint64_t titleId,
     scheduleLeaveCapture([this, titleId, launchTitle]() {
         m_audio.playSfx(Sfx::LaunchGame);
         m_launchAnim->startResume([this, titleId, launchTitle]() {
-            m_config.noteOpened(titleId);
-            m_config.save();
             m_widgetStore.recordLaunch(titleId, launchTitle,
                 static_cast<std::int64_t>(std::time(nullptr)));
             m_widgetStore.save();
@@ -3516,8 +3526,7 @@ void WiiUMenuApp::activateApplication(GlossyIcon* source, AppEntry* entry,
             m_audio.playSfx(Sfx::LaunchGame);
             m_launchAnim->start(frame, texture, radius, base, border, titleId, uid,
                 [this, launchTitle](std::uint64_t id, AccountUid selectedUid) {
-                    m_config.noteOpened(id);
-                    m_config.save();
+                    noteLaunchedRecent(id);
                     m_widgetStore.recordLaunch(id, launchTitle,
                         static_cast<std::int64_t>(std::time(nullptr)));
                     m_widgetStore.save();

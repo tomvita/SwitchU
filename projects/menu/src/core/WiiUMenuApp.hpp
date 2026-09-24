@@ -327,6 +327,8 @@ private:
     void cycleSortMode();
     bool sortProjectionActive() const;
     std::string sortModeLabel() const;
+    int recentRank(std::uint64_t titleId) const;
+    void noteLaunchedRecent(std::uint64_t titleId);
     // Name filter (X on the home screen): shows only games whose title contains
     // the text, ignoring case. Display-only; it never changes layout.json.
     void promptNameFilter();
@@ -508,6 +510,9 @@ private:
     int m_consoleBatteryPercent = 0;
     bool m_consoleBatteryCharging = false;
     std::vector<AppEntry> m_allApps;
+    // Position in the daemon's catalogue, newest first; the "Recent" order.
+    std::unordered_map<std::uint64_t, int> m_recentRank;
+    int m_recentFront = 0;
     std::uint32_t m_openFolderId = 0;
     std::uint32_t m_requestedFolderId = 0;
     std::uint64_t m_folderOpenFocusTitleId = 0;  

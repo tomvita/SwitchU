@@ -31,29 +31,9 @@ struct AppConfig {
     std::string steamGridDbApiKey;
 
     // 0 keeps the hand-made layout. The other modes are display-only
-    // projections and never overwrite layout.json.
+    // projections and never overwrite layout.json. "Recent" (2) follows the
+    // daemon's catalogue order, which is ns's newest-first record order.
     int sortMode = 0;
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> lastOpened;
-    std::uint64_t lastOpenedSequence = 0;
-
-    std::uint64_t lastOpenedAt(std::uint64_t titleId) const {
-        for (const auto& entry : lastOpened)
-            if (entry.first == titleId) return entry.second;
-        return 0;
-    }
-    void noteOpened(std::uint64_t titleId) {
-        for (const auto& entry : lastOpened)
-            lastOpenedSequence = std::max(lastOpenedSequence, entry.second);
-        if (lastOpenedSequence != std::numeric_limits<std::uint64_t>::max())
-            ++lastOpenedSequence;
-        for (auto& entry : lastOpened) {
-            if (entry.first == titleId) {
-                entry.second = lastOpenedSequence;
-                return;
-            }
-        }
-        lastOpened.emplace_back(titleId, lastOpenedSequence);
-    }
 
     std::string themePreset = "Default Light";
     // See switchu::folders::kFolderStyle*. Applies to every folder tile.

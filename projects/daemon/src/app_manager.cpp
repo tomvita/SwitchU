@@ -255,7 +255,7 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
 // AppletMessage 50: another program called appletRequestLaunchApplication().
 // AM already holds the accessor for the requested title; only one application
 // can run at a time, so the current one (often the requester) exits first.
-Result ApplicationSession::launchRequested(AccountUid uid) {
+Result ApplicationSession::launchRequested(RequestedLaunchUserChooser chooseUser) {
     const Result stopRc = stopBeforeLaunch("replace-before-requested-launch");
     if (R_FAILED(stopRc))
         return stopRc;
@@ -272,6 +272,16 @@ Result ApplicationSession::launchRequested(AccountUid uid) {
     rc = appletApplicationGetApplicationId(&m_application, &titleId);
     if (R_FAILED(rc))
         switchu::FileLog::log("[app] requested GetApplicationId non-fatal rc=0x%X", rc);
+
+    AccountUid uid{};
+    rc = chooseUser ? chooseUser(titleId, &uid) : 0;
+    if (R_FAILED(rc)) {
+        switchu::FileLog::log("[app] requested launch cancelled title=0x%016lX rc=0x%X",
+                              titleId, rc);
+        resetToIdle();
+        m_lastResult = rc;
+        return rc;
+    }
 
     beginSession(titleId, uid, "requested-launch");
     m_state = SessionState::Created;
@@ -415,7 +425,9 @@ std::uint64_t suspendedTitleId() { return session().suspendedTitleId(); }
 SessionSnapshot snapshot() { return session().snapshot(); }
 Event* stateChangedEvent() { return session().stateChangedEvent(); }
 Result launch(std::uint64_t titleId, AccountUid uid) { return session().launch(titleId, uid); }
-Result launchRequested(AccountUid uid) { return session().launchRequested(uid); }
+Result launchRequested(RequestedLaunchUserChooser chooseUser) {
+    return session().launchRequested(chooseUser);
+}
 Result resume() { return session().resume(); }
 Result terminate() { return session().terminate(); }
 Result areLibraryAppletsLeft(bool* out) { return session().areLibraryAppletsLeft(out); }

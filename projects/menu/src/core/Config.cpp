@@ -80,16 +80,6 @@ bool AppConfig::load() {
     readJsonOpt(j, "steamGridDbEnabled", steamGridDbEnabled);
     readJsonOpt(j, "steamGridDbApiKey", steamGridDbApiKey);
     readJsonOpt(j, "sortMode", sortMode);
-    readJsonOpt(j, "lastOpenedSequence", lastOpenedSequence);
-    lastOpened.clear();
-    if (auto it = j.find("lastOpened"); it != j.end() && it->is_object()) {
-        for (auto& [key, value] : it->items()) {
-            if (!value.is_number_unsigned()) continue;
-            const auto titleId = std::strtoull(key.c_str(), nullptr, 16);
-            if (titleId != 0)
-                lastOpened.emplace_back(titleId, value.get<std::uint64_t>());
-        }
-    }
     readJsonOpt(j, "themePreset", themePreset);
     readJsonOpt(j, "folderStyle", folderStyle);
     const bool hasShowCoverKey = j.find("folderShowCover") != j.end();
@@ -169,17 +159,6 @@ bool AppConfig::save() const {
     j["steamGridDbEnabled"] = steamGridDbEnabled;
     j["steamGridDbApiKey"] = steamGridDbApiKey;
     j["sortMode"] = std::clamp(sortMode, 0, 2);
-    j["lastOpenedSequence"] = lastOpenedSequence;
-    {
-        nlohmann::json opened = nlohmann::json::object();
-        char key[17];
-        for (const auto& entry : lastOpened) {
-            std::snprintf(key, sizeof(key), "%016llX",
-                          static_cast<unsigned long long>(entry.first));
-            opened[key] = entry.second;
-        }
-        j["lastOpened"] = std::move(opened);
-    }
     j["themePreset"] = themePreset;
     j["folderStyle"] = std::clamp(folderStyle, 0, switchu::folders::kFolderStyleCount - 1);
     j["folderShowCover"] = folderShowCover;

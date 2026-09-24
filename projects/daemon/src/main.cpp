@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <system_error>
 
 using namespace switchu;
@@ -226,6 +227,7 @@ struct DaemonAppCatalogEntry {
 };
 
 static std::vector<DaemonAppCatalogEntry> g_appCatalog;
+static std::vector<uint64_t> g_lastCatalogOrder;   // title ids as last written
 static std::atomic<bool> g_appCatalogRefreshPending{false};
 // A catalogue rebuild can complete while a full-application homebrew owns the
 // foreground and the menu process is absent. Preserve that edge so the freshly
@@ -535,10 +537,28 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     g_appCatalog.clear();
     g_appCatalog.reserve(count);
 
+    // The catalogue is written newest first, which is the menu's "Recent"
+    // order. ns bumps a record's last_updated when the title is installed,
+    // updated or launched (nsTouchApplication), which is the order Nintendo's
+    // HOME shows, so a fresh install comes first as well.
+    std::vector<s32> order(static_cast<std::size_t>(count));
+    for (s32 i = 0; i < count; ++i)
+        order[static_cast<std::size_t>(i)] = i;
+    std::stable_sort(order.begin(), order.end(), [&records](s32 a, s32 b) {
+        return records[a].last_updated > records[b].last_updated;
+    });
+    for (s32 i = 0; i < count && i < 3; ++i) {
+        const auto& record = records[order[static_cast<std::size_t>(i)]];
+        switchu::FileLog::log("[catalog] recent #%d 0x%016lX last_updated=%lu event=%u",
+                              i + 1, static_cast<unsigned long>(record.id),
+                              static_cast<unsigned long>(record.last_updated),
+                              static_cast<unsigned>(record.last_event));
+    }
+
     // Resolve display name and startup-user policy here, on the daemon, so the
     // menu can build its grid straight from applist.bin. Otherwise every menu
     // cold start reopens one .meta file per installed title.
-    for (s32 i = 0; i < count; ++i) {
+    for (const s32 i : order) {
         const uint64_t tid = records[i].id;
         DaemonAppCatalogEntry ent;
         ent.titleId = tid;
@@ -572,6 +592,16 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
             }
         }
     }
+    // A launch only reorders the catalogue, but the menu's "Recent" view
+    // still has to hear about it.
+    std::vector<uint64_t> recentOrder;
+    recentOrder.reserve(g_appCatalog.size());
+    for (const auto& ent : g_appCatalog)
+        recentOrder.push_back(ent.titleId);
+    if (recentOrder != g_lastCatalogOrder) {
+        changed = true;
+        g_lastCatalogOrder = std::move(recentOrder);
+    }
     g_lastRecordCount = count;
     for (s32 i = 0; i < count; ++i) {
         g_lastRecordTids[i] = records[i].id;
@@ -590,6 +620,13 @@ static bool rebuildAppCatalog(const char* reason, bool* outChanged = nullptr) {
     if (outChanged)
         *outChanged = changed;
     return ok;
+}
+
+// A launch moves the title to the front of the catalogue. ns may not signal a
+// record update for nsTouchApplication, so ask for the rebuild here; it waits
+// until the game leaves the foreground like any other.
+static void noteApplicationLaunched() {
+    g_appCatalogRefreshPending.store(true);
 }
 
 static void cancelViewPolling(const char* reason) {
@@ -1774,8 +1811,115 @@ static AccountUid resolveUser(AccountUid preferred) {
     return uid;
 }
 
+// The menu's "default profile" setting. The menu writes the uid only while the
+// setting is on, so a well-formed uid of a user that still exists means it is on.
+static bool readMenuDefaultProfile(AccountUid& out) {
+    std::ifstream f("sdmc:/config/SwitchU/settings.json");
+    if (!f.is_open())
+        return false;
+    const std::string text((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+    const std::size_t key = text.find("\"defaultProfileUid\"");
+    const std::size_t open = key == std::string::npos ? key
+        : text.find('"', text.find(':', key));
+    if (open == std::string::npos || open + 33 >= text.size() || text[open + 33] != '"')
+        return false;
+
+    AccountUid uid{};
+    for (int part = 0; part < 2; ++part) {
+        for (int i = 0; i < 16; ++i) {
+            const char ch = text[open + 1 + part * 16 + i];
+            const int nibble = ch >= '0' && ch <= '9' ? ch - '0'
+                : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
+                : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : -1;
+            if (nibble < 0)
+                return false;
+            uid.uid[part] = (uid.uid[part] << 4) | static_cast<u64>(nibble);
+        }
+    }
+
+    AccountUid users[ACC_USER_LIST_SIZE]{};
+    s32 userCount = 0;
+    if (!accountUidIsValid(&uid) ||
+        R_FAILED(accountListAllUsers(users, ACC_USER_LIST_SIZE, &userCount)))
+        return false;
+    for (s32 i = 0; i < userCount; ++i) {
+        if (users[i].uid[0] == uid.uid[0] && users[i].uid[1] == uid.uid[1]) {
+            out = uid;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Same decision the menu makes before its own launches (default profile, then a
+// silent pick, then asking), except that the question is the system's
+// playerSelect applet, as on Nintendo's HOME. Titles that do not need a user
+// keep the old silent choice.
+static Result chooseRequestedLaunchUser(uint64_t titleId, AccountUid* outUid) {
+    uint8_t account = 1;
+    uint8_t option = 0;
+    switchu::control_cache::Meta meta{};
+    if (switchu::control_cache::readMeta(titleId, meta)) {
+        account = meta.startup_user_account;
+        option = meta.startup_user_account_option;
+    }
+
+    *outUid = AccountUid{};
+    if (account == 0)
+        return 0;
+    if (account != 2 && option != 0) {
+        *outUid = resolveUser(AccountUid{});
+        return 0;
+    }
+
+    const bool networkRequired = account == 2;
+    AccountUid uid{};
+    if (!networkRequired && readMenuDefaultProfile(uid)) {
+        *outUid = uid;
+        return 0;
+    }
+    uid = AccountUid{};
+    Result rc = accountTrySelectUserWithoutInteraction(&uid, networkRequired);
+    if (R_SUCCEEDED(rc) && accountUidIsValid(&uid)) {
+        *outUid = uid;
+        return 0;
+    }
+
+    switchu::FileLog::log("[launch-request] asking for a user title=0x%016lX nsa=%d",
+                          titleId, networkRequired ? 1 : 0);
+    appletRequestToGetForeground();
+    g_foregroundAppletActive = true;
+    g_pendingForegroundAppletHome = false;
+    // pselShowUserSelectorForLauncher() would first call
+    // accountIsUserRegistrationRequestPermitted(), which acc denies us (see the
+    // user creator), so fill in the launcher settings directly.
+    PselUiSettings ui{};
+    rc = pselUiCreate(&ui, PselUiMode_UserSelector);
+    if (R_SUCCEEDED(rc)) {
+        ui.settings.application_id = titleId;
+        ui.settings.is_network_service_account_required = networkRequired ? 1 : 0;
+        ui.settings.unk_x92 = 1;
+        ui.settings.unk_x96 = 1;
+        uid = AccountUid{};
+        rc = pselUiShow(&ui, &uid);
+    }
+    g_foregroundAppletActive = false;
+    g_pendingForegroundAppletHome = false;
+    switchu::FileLog::log("[launch-request] user selector rc=0x%X selected=%d",
+                          rc, accountUidIsValid(&uid) ? 1 : 0);
+    if (R_FAILED(rc))
+        return rc;
+    if (!accountUidIsValid(&uid))
+        return MAKERESULT(124, 1); // nn::account::ResultCancelledByUser
+    *outUid = uid;
+    return 0;
+}
+
 static Result launchRequestedApplication() {
-    const Result rc = daemon::app::launchRequested(resolveUser(AccountUid{}));
+    const Result rc = daemon::app::launchRequested(chooseRequestedLaunchUser);
+    if (R_SUCCEEDED(rc))
+        noteApplicationLaunched();
     switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,
                           daemon::app::suspendedTitleId());
     return rc;
@@ -2439,6 +2583,8 @@ static bool handleAction(daemon::SystemAction& action) {
             if (R_FAILED(rc)) {
                 switchu::FileLog::log("[action] launch 0x%016lX FAIL: 0x%X", action.titleId, rc);
                 openHome(smi::MenuStartMode::MainMenu, "action-launch");
+            } else {
+                noteApplicationLaunched();
             }
             return true;
         }
