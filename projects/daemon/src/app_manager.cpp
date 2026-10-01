@@ -64,9 +64,9 @@ struct LaunchMetadata {
 LaunchMetadata ensureApplicationSaveData(std::uint64_t titleId, AccountUid uid) {
     LaunchMetadata launch{};
     switchu::control_cache::Meta meta{};
-    if (!switchu::control_cache::readMeta(titleId, meta)) {
+    if (!switchu::control_cache::readOrFetchMeta(titleId, meta)) {
         switchu::FileLog::log(
-            "[app] control cache missing for 0x%016lX; save data not precreated",
+            "[app] control data unavailable for 0x%016lX; save data not precreated",
             titleId);
         return launch;
     }

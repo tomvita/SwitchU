@@ -1860,7 +1860,7 @@ static Result chooseRequestedLaunchUser(uint64_t titleId, AccountUid* outUid) {
     uint8_t account = 1;
     uint8_t option = 0;
     switchu::control_cache::Meta meta{};
-    if (switchu::control_cache::readMeta(titleId, meta)) {
+    if (switchu::control_cache::readOrFetchMeta(titleId, meta)) {
         account = meta.startup_user_account;
         option = meta.startup_user_account_option;
     }

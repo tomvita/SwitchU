@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <new>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -407,6 +408,29 @@ inline bool writeFromControlData(uint64_t titleId, const NsApplicationControlDat
     }
 
     return writeMeta(meta);
+}
+
+// readMeta(), and for a title that is not cached yet, its control data read
+// now -- and cached for next time.  A game installed while the menu was not
+// listing titles (from DBI, say) has no entry until the menu lists it again.
+// A launch requested by another program found none, so the daemon made no save
+// data and preselected no user: the game got past the logo and quit, and only a
+// first launch from the menu (which lists, and so caches it) made it work.
+inline bool readOrFetchMeta(uint64_t titleId, Meta& out) {
+    if (readMeta(titleId, out))
+        return true;
+    std::unique_ptr<NsApplicationControlData> controlData(new (std::nothrow) NsApplicationControlData());
+    if (!controlData)
+        return false;
+    u64 controlSize = 0;
+    const Result rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, titleId,
+                                                  controlData.get(), sizeof(*controlData), &controlSize);
+    if (R_FAILED(rc) || controlSize < sizeof(NacpStruct))
+        return false;
+    if (!fillMetaFromControlData(titleId, *controlData, out))
+        return false;
+    (void)writeFromControlData(titleId, *controlData, controlSize);
+    return true;
 }
 
 }
