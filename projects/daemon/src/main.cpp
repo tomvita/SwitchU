@@ -38,7 +38,6 @@ static bool g_nsReady = false;
 static bool g_ldrShellReady = false;
 static bool g_accountReady = false;
 static bool g_nssuReady = false;
-static bool g_avmReady = false;
 static bool g_psmReady = false;
 static bool g_lblReady = false;
 static bool g_hidReady = false;
@@ -123,11 +122,6 @@ extern "C" void __appInit(void) {
     if (R_FAILED(rc))
         svcOutputDebugString("[SwitchU-daemon] nssuInitialize FAIL", 37);
 
-    rc = avmInitialize();
-    g_avmReady = R_SUCCEEDED(rc);
-    if (R_FAILED(rc))
-        svcOutputDebugString("[SwitchU-daemon] avmInitialize FAIL", 36);
-
     rc = psmInitialize();
     g_psmReady = R_SUCCEEDED(rc);
     if (R_FAILED(rc))
@@ -152,7 +146,7 @@ extern "C" void __appInit(void) {
 
     switchu::FileLog::open("daemon");
     switchu::FileLog::log("[daemon] __appInit complete (sd mount: 0x%X)", rc);
-    switchu::FileLog::log("[daemon] services time=%d setsys=%d set=%d ns=%d ldr=%d account=%d nssu=%d avm=%d psm=%d lbl=%d hid=%d",
+    switchu::FileLog::log("[daemon] services time=%d setsys=%d set=%d ns=%d ldr=%d account=%d nssu=%d psm=%d lbl=%d hid=%d",
                           g_timeReady ? 1 : 0,
                           g_setsysReady ? 1 : 0,
                           g_setReady ? 1 : 0,
@@ -160,7 +154,6 @@ extern "C" void __appInit(void) {
                           g_ldrShellReady ? 1 : 0,
                           g_accountReady ? 1 : 0,
                           g_nssuReady ? 1 : 0,
-                          g_avmReady ? 1 : 0,
                           g_psmReady ? 1 : 0,
                           g_lblReady ? 1 : 0,
                           g_hidReady ? 1 : 0);
@@ -175,7 +168,6 @@ extern "C" void __appExit(void) {
     if (g_hidReady) hidExit();
     if (g_lblReady) lblExit();
     if (g_psmReady) psmExit();
-    if (g_avmReady) avmExit();
     if (g_nssuReady) nssuExit();
     if (g_accountReady) accountExit();
     if (g_ldrShellReady) ldrShellExit();
@@ -267,6 +259,10 @@ static uint64_t g_pendingHomeMenuStartedAt = 0;
 // AppletMessage 50: a program called appletRequestLaunchApplication(). The
 // launch waits until the menu / foreground applet in front has closed.
 static bool g_launchRequestPending = false;
+// Whether that request came from an applet in front (hbmenu / sphaira / DBI /
+// Breeze) rather than from the running application. Decided when the request
+// arrives: by the time it is acted on, the application has been stopped.
+static bool g_launchRequestFromApplet = false;
 static AccountUid g_lastLaunchUid{};
 
 // Breeze Home toggle (fork-only): see smi::kBreezeHomeToggleFlag.
@@ -1776,6 +1772,11 @@ static void onLaunchRequested() {
         daemon::menu_la::hasHolder() ? 1 : 0, g_foregroundAppletActive ? 1 : 0,
         g_breezeSession ? 1 : 0, g_breezeHidden ? 1 : 0);
     g_launchRequestPending = true;
+    // Only an application that is in front can be the one asking; with an applet
+    // or the menu in front, it is that one.
+    g_launchRequestFromApplet = !(daemon::app::isRunning() && daemon::app::hasForeground());
+    switchu::FileLog::log("[ae] launch requested by %s",
+                          g_launchRequestFromApplet ? "an applet" : "the application");
 
     if (g_pendingHomeMenuLaunch) {
         switchu::FileLog::log("[ae] clearing pending HOME foreground handoff: launch requested");
@@ -1917,7 +1918,8 @@ static Result chooseRequestedLaunchUser(uint64_t titleId, AccountUid* outUid) {
 }
 
 static Result launchRequestedApplication() {
-    const Result rc = daemon::app::launchRequested(chooseRequestedLaunchUser);
+    const Result rc = daemon::app::launchRequested(chooseRequestedLaunchUser,
+                                                  g_launchRequestFromApplet);
     if (R_SUCCEEDED(rc))
         noteApplicationLaunched();
     switchu::FileLog::log("[launch-request] rc=0x%X title=0x%016lX", rc,

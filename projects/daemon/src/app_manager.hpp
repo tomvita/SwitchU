@@ -40,7 +40,7 @@ public:
     ApplicationSession& operator=(const ApplicationSession&) = delete;
 
     Result launch(std::uint64_t titleId, AccountUid uid);
-    Result launchRequested(RequestedLaunchUserChooser chooseUser);
+    Result launchRequested(RequestedLaunchUserChooser chooseUser, bool dropLaunchParameter);
     Result resume();
     Result terminate();
     Result requestExitLibraryAppletOrTerminate(std::uint64_t timeoutNs);
@@ -83,7 +83,9 @@ std::uint64_t suspendedTitleId();
 SessionSnapshot snapshot();
 Event* stateChangedEvent();
 Result launch(std::uint64_t titleId, AccountUid uid);
-Result launchRequested(RequestedLaunchUserChooser chooseUser);
+// dropLaunchParameter: the request came from an applet, not from the running
+// application; start the title without the parameter AM attached for it.
+Result launchRequested(RequestedLaunchUserChooser chooseUser, bool dropLaunchParameter);
 Result resume();
 Result terminate();
 Result areLibraryAppletsLeft(bool* out);

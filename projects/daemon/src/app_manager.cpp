@@ -255,7 +255,8 @@ Result ApplicationSession::launch(std::uint64_t titleId, AccountUid uid) {
 // AppletMessage 50: another program called appletRequestLaunchApplication().
 // AM already holds the accessor for the requested title; only one application
 // can run at a time, so the current one (often the requester) exits first.
-Result ApplicationSession::launchRequested(RequestedLaunchUserChooser chooseUser) {
+Result ApplicationSession::launchRequested(RequestedLaunchUserChooser chooseUser,
+                                           bool dropLaunchParameter) {
     const Result stopRc = stopBeforeLaunch("replace-before-requested-launch");
     if (R_FAILED(stopRc))
         return stopRc;
@@ -284,6 +285,24 @@ Result ApplicationSession::launchRequested(RequestedLaunchUserChooser chooseUser
     }
 
     beginSession(titleId, uid, "requested-launch");
+
+    // A library applet cannot ask for a launch without handing AM a parameter
+    // storage, so libnx attaches an empty one, and AM's accessor carries it as
+    // the title's user launch parameter. A game that reads its launch parameter
+    // takes it at its word: the Pixel Game Maker player uses it as the path of
+    // the project to load, loads nothing and crashes on a null ProjectData
+    // (Timothy and the Tower of Mu, from sphaira, DBI and Breeze in applet mode).
+    // So for an applet's request, start a clean accessor, as a menu launch does.
+    // An application's own request keeps AM's accessor: that parameter is real
+    // (nn::oe::ExecuteProgram between a title's programs).
+    if (dropLaunchParameter && titleId != 0) {
+        closeAccessor();
+        const Result createRc = appletCreateApplication(&m_application, titleId);
+        switchu::FileLog::log("[app] requested by an applet: clean accessor rc=0x%X", createRc);
+        if (R_FAILED(createRc))
+            return failTransition(createRc, "create", false);
+    }
+
     m_state = SessionState::Created;
     return startCreated(uid);
 }
@@ -425,8 +444,8 @@ std::uint64_t suspendedTitleId() { return session().suspendedTitleId(); }
 SessionSnapshot snapshot() { return session().snapshot(); }
 Event* stateChangedEvent() { return session().stateChangedEvent(); }
 Result launch(std::uint64_t titleId, AccountUid uid) { return session().launch(titleId, uid); }
-Result launchRequested(RequestedLaunchUserChooser chooseUser) {
-    return session().launchRequested(chooseUser);
+Result launchRequested(RequestedLaunchUserChooser chooseUser, bool dropLaunchParameter) {
+    return session().launchRequested(chooseUser, dropLaunchParameter);
 }
 Result resume() { return session().resume(); }
 Result terminate() { return session().terminate(); }
