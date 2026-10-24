@@ -290,6 +290,7 @@ enum class BreezeOverlayState : uint8_t { None, Hidden, Shown };
 static BreezeOverlayState g_breezeOverlay = BreezeOverlayState::None;
 static bool g_breezeOverlayCapable = false;         // breeze_running holds the capability
 static bool g_breezeOverlayForegroundRequested = false;
+static bool g_breezeOverlayStartRequested = false;   // RequestOverlay received
 static AppletHolder* g_breezeHolder = nullptr;       // set by the runner while the applet runs
 
 static uint8_t g_lastBatteryPercent = 0xFF;
@@ -1039,6 +1040,7 @@ static const char* breezeOverlayCommandName(smi::BreezeOverlayCommand command) {
         case smi::BreezeOverlayCommand::Ack: return "Ack";
         case smi::BreezeOverlayCommand::RequestForeground: return "RequestForeground";
         case smi::BreezeOverlayCommand::StateChanged: return "StateChanged";
+        case smi::BreezeOverlayCommand::RequestOverlay: return "RequestOverlay";
     }
     return "?";
 }
@@ -1060,6 +1062,8 @@ static bool drainBreezeOverlayMessages(smi::BreezeOverlayCommand awaited) {
                 acked = true;
         } else if (command == smi::BreezeOverlayCommand::RequestForeground) {
             g_breezeOverlayForegroundRequested = true;
+        } else if (command == smi::BreezeOverlayCommand::RequestOverlay) {
+            g_breezeOverlayStartRequested = true;
         } else if (command == smi::BreezeOverlayCommand::StateChanged &&
                    g_breezeOverlay != BreezeOverlayState::None) {
             // Breeze showed itself on a breakpoint hit, or hid itself after one.
@@ -1166,6 +1170,7 @@ static void beginBreezeCandidate(bool direct, AccountUid uid, const char* slotNa
     g_breezeOverlay = BreezeOverlayState::None;
     g_breezeOverlayCapable = false;
     g_breezeOverlayForegroundRequested = false;
+    g_breezeOverlayStartRequested = false;
 }
 
 static bool breezeSkipForegroundRestore() {
@@ -1418,6 +1423,7 @@ static bool finishBreezeApplet(const char* name) {
     g_breezeOverlay = BreezeOverlayState::None;
     g_breezeOverlayCapable = false;
     g_breezeOverlayForegroundRequested = false;
+    g_breezeOverlayStartRequested = false;
     g_breezeCandidate = false;
     g_breezeSession = false;
     g_breezeHidden = false;
@@ -2101,6 +2107,24 @@ static void pumpBreezeAppletMessages() {
             if (takeForegroundFromRunningApp("breeze-overlay"))
                 g_breezeHidden = false;
             breezeOverlayTrace("overlay closed by Breeze; applet back in front");
+        }
+    } else if (g_breezeSession) {
+        // Breeze started in front of the suspended game asks (RequestOverlay)
+        // once it is ready; with the toggle on Overlay it becomes the overlay
+        // now, as HOME to the game and HOME back would make it.
+        drainBreezeOverlayMessages(smi::BreezeOverlayCommand::Ack);
+        if (g_breezeOverlayStartRequested) {
+            g_breezeOverlayStartRequested = false;
+            if (!g_breezeOverlayCapable)
+                g_breezeOverlayCapable = readBreezeOverlayCapability();
+            if (readBreezeToggleMode() == BreezeToggleMode::Overlay && g_breezeOverlayCapable &&
+                g_foregroundAppletActive && !g_breezeHidden && !g_breezeCloseForGame &&
+                !g_breezeCloseForSleep && daemon::app::isRunning() &&
+                handleBreezeOverlayHome("breeze-start") && g_breezeOverlay == BreezeOverlayState::Hidden &&
+                sendBreezeOverlay(smi::BreezeOverlayCommand::Show, 1000))
+                g_breezeOverlay = BreezeOverlayState::Shown;
+            breezeOverlayTrace("Breeze asked for the overlay at start: state=%d",
+                               static_cast<int>(g_breezeOverlay));
         }
     }
 

@@ -15,7 +15,7 @@ local version_define = string.format('SWITCHU_VERSION="%s"', version)
 -- switch/SwitchU/fork.txt (see smi::kForkInfoPath). Breeze offers to install or
 -- update the fork when this is lower than it needs. Bump it only when the
 -- interface changes, not for every release.
-local breeze_interface = 5
+local breeze_interface = 6
 
 set_version("1.2.0")
 

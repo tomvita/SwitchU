@@ -205,6 +205,7 @@ static constexpr const char* kHomeToggleForkMarker = "sdmc:/config/SwitchU/home_
 //   3: BreezeOverlayCommand Release / StateChanged (Breeze's Break and Trace)
 //   4: kBreezeFirstFlag (Breeze as HOME) and the Album loader next to the daemon
 //   5: kBreezeOpenAppletFlag (system applets started for Breeze)
+//   6: BreezeOverlayCommand RequestOverlay (Breeze starts as the overlay)
 static constexpr const char* kForkInfoPath = "sdmc:/switch/SwitchU/fork.txt";
 // The same file next to the daemon (from 1.2.0i), so a daemon-only install
 // without switch/SwitchU still tells Breeze its interface level.
@@ -243,6 +244,10 @@ enum class BreezeOverlayCommand : uint32_t {
     RequestForeground = 0x82, // Breeze -> daemon: exiting, bring the applet to the front
     StateChanged = 0x83,    // overlay2, Breeze -> daemon, not acked: Breeze showed itself
                             // (arg = Show, a breakpoint hit) or hid itself (arg = Hide)
+    RequestOverlay = 0x84,  // interface 6, Breeze -> daemon, not acked: Breeze started in
+                            // front of a suspended game with the toggle on Overlay and is
+                            // ready; make it the overlay now (EnterHidden, the game in
+                            // front, then Show) instead of on the next two HOME presses
 };
 
 struct BreezeOverlayMessage {
